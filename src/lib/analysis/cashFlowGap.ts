@@ -1,5 +1,5 @@
-import type { RiskSignal } from "@/types/analysis";
-import type { NormalizedFinancialData } from "@/types/financial";
+import type { RiskSignal } from "../../types/analysis";
+import type { NormalizedFinancialData } from "../../types/financial";
 
 export function analyzeCashFlowGap(data: NormalizedFinancialData[]): RiskSignal[] {
   return data.flatMap((item) => {

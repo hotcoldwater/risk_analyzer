@@ -1,26 +1,21 @@
-import { AppError } from "@/lib/utils/errors";
-import type { DartStatusResponse } from "@/types/dart";
+import { AppError, requireValue } from "../utils/errors";
+import type { DartStatusResponse } from "../../types/dart";
 
 const DART_API_BASE_URL = "https://opendart.fss.or.kr/api";
 
-function getApiKey() {
-  const apiKey = process.env.DART_API_KEY;
-
-  if (!apiKey) {
-    throw new AppError("DART API 인증키가 설정되지 않았습니다.", "MISSING_DART_API_KEY", 500);
-  }
-
-  return apiKey;
-}
-
 export async function dartFetch<T extends DartStatusResponse>(
   endpoint: string,
-  params: Record<string, string>
+  params: Record<string, string>,
+  apiKey: string | undefined
 ): Promise<T> {
-  const apiKey = getApiKey();
+  const verifiedApiKey = requireValue(
+    apiKey,
+    "DART API 인증키가 설정되지 않았습니다.",
+    "MISSING_DART_API_KEY"
+  );
   const url = new URL(`${DART_API_BASE_URL}/${endpoint}`);
 
-  url.searchParams.set("crtfc_key", apiKey);
+  url.searchParams.set("crtfc_key", verifiedApiKey);
 
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
@@ -49,8 +44,4 @@ export async function dartFetch<T extends DartStatusResponse>(
   }
 
   return data;
-}
-
-export function getDartApiKey() {
-  return getApiKey();
 }

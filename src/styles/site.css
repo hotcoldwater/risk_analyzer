@@ -1,0 +1,279 @@
+:root {
+  color-scheme: light;
+  --ink: #102033;
+  --mist: #eff5fb;
+  --line: #d2dfeb;
+  --panel: #ffffff;
+  --accent: #0f6c86;
+  --accent-soft: #d8eef5;
+  --danger: #b42318;
+  --muted: #5b6b79;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Pretendard", "IBM Plex Sans KR", system-ui, sans-serif;
+  background:
+    radial-gradient(circle at top, rgba(216, 238, 245, 0.95), rgba(239, 245, 251, 0.92) 38%, #eff5fb 100%);
+  color: var(--ink);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.page-shell {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 40px 16px 56px;
+}
+
+.hero-card,
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  box-shadow: 0 16px 34px rgba(16, 32, 51, 0.08);
+}
+
+.hero-card {
+  margin-bottom: 24px;
+  padding: 32px;
+  background: linear-gradient(135deg, #102033 0%, #18344f 100%);
+  color: white;
+}
+
+.hero-card h1 {
+  margin: 10px 0 0;
+  font-size: clamp(2rem, 3vw, 3.2rem);
+  line-height: 1.16;
+}
+
+.eyebrow {
+  margin: 0;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  color: #b7dceb;
+  font-weight: 700;
+}
+
+.hero-copy {
+  margin: 16px 0 0;
+  max-width: 760px;
+  color: #d7e4ee;
+}
+
+.panel {
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.form-grid,
+.card-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.card-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.field span {
+  font-size: 0.95rem;
+}
+
+.field-span {
+  grid-column: 1 / -1;
+}
+
+.search-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+}
+
+input,
+select {
+  width: 100%;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+}
+
+.button {
+  min-height: 52px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 18px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.button-dark {
+  background: var(--ink);
+  color: white;
+}
+
+.button-accent {
+  background: var(--accent);
+  color: white;
+}
+
+.inline-error,
+.error-panel,
+.status-error {
+  color: var(--danger);
+}
+
+.inline-error {
+  margin-top: 14px;
+}
+
+.search-results {
+  margin-top: 18px;
+}
+
+.result-list {
+  display: grid;
+  gap: 10px;
+}
+
+.company-item {
+  width: 100%;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  text-align: left;
+  background: #fff;
+  cursor: pointer;
+}
+
+.company-item strong,
+.company-item span {
+  display: block;
+}
+
+.company-item span {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.company-item.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.result-stack {
+  display: grid;
+  gap: 24px;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.info-grid dt {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.info-grid dd {
+  margin: 6px 0 0;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 14px 12px;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+thead th {
+  background: #f5f9fc;
+  border-top: 0;
+}
+
+.section-head,
+.signal-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.chart {
+  width: 100%;
+  margin-top: 14px;
+}
+
+.signal-list,
+.status-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.signal-card,
+.status-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: #f6fafc;
+}
+
+.signal-card p,
+.status-card p,
+.empty-state p,
+.muted {
+  color: var(--muted);
+}
+
+@media (max-width: 840px) {
+  .form-grid,
+  .card-grid,
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .search-row {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,10 +1,13 @@
-import { dartFetch } from "@/lib/dart/client";
-import type { CompanyProfile, DartCompanyResponse } from "@/types/dart";
+import { dartFetch } from "./client";
+import type { CompanyProfile, DartCompanyResponse } from "../../types/dart";
 
-export async function fetchCompanyProfile(corpCode: string): Promise<CompanyProfile> {
+export async function fetchCompanyProfile(
+  corpCode: string,
+  apiKey: string | undefined
+): Promise<CompanyProfile> {
   const data = await dartFetch<DartCompanyResponse>("company.json", {
     corp_code: corpCode
-  });
+  }, apiKey);
 
   return {
     corpCode: data.corp_code ?? corpCode,

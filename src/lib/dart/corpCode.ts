@@ -1,8 +1,7 @@
 import { unzipSync, strFromU8 } from "fflate";
 import { XMLParser } from "fast-xml-parser";
-import { AppError } from "@/lib/utils/errors";
-import { getDartApiKey } from "@/lib/dart/client";
-import type { CorpSummary } from "@/types/dart";
+import { AppError, requireValue } from "../utils/errors";
+import type { CorpSummary } from "../../types/dart";
 
 type CorpCodeItem = {
   corp_code?: string;
@@ -17,21 +16,22 @@ function normalizeQuery(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, "");
 }
 
-async function loadCorpCodes(): Promise<CorpSummary[]> {
+async function loadCorpCodesWithKey(apiKey: string | undefined): Promise<CorpSummary[]> {
   if (corpCache) {
     return corpCache;
   }
 
-  const apiKey = getDartApiKey();
+  const verifiedApiKey = requireValue(
+    apiKey,
+    "DART API 인증키가 설정되지 않았습니다.",
+    "MISSING_DART_API_KEY"
+  );
   const url = new URL("https://opendart.fss.or.kr/api/corpCode.xml");
-  url.searchParams.set("crtfc_key", apiKey);
+  url.searchParams.set("crtfc_key", verifiedApiKey);
 
   const response = await fetch(url.toString(), {
     method: "GET",
-    cache: "force-cache",
-    next: {
-      revalidate: 60 * 60 * 24
-    }
+    cache: "force-cache"
   });
 
   if (!response.ok) {
@@ -72,14 +72,17 @@ async function loadCorpCodes(): Promise<CorpSummary[]> {
   return corpCache;
 }
 
-export async function searchCorporationsByName(query: string): Promise<CorpSummary[]> {
+export async function searchCorporationsByName(
+  query: string,
+  apiKey: string | undefined
+): Promise<CorpSummary[]> {
   const normalizedQuery = normalizeQuery(query);
 
   if (!normalizedQuery) {
     return [];
   }
 
-  const corpCodes = await loadCorpCodes();
+  const corpCodes = await loadCorpCodesWithKey(apiKey);
   return corpCodes
     .filter((corp) => normalizeQuery(corp.corpName).includes(normalizedQuery))
     .sort((a, b) => {

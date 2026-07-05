@@ -1,4 +1,4 @@
-import type { DebtRatioResult, NormalizedFinancialData } from "@/types/financial";
+import type { DebtRatioResult, NormalizedFinancialData } from "../../types/financial";
 
 export function calculateDebtRatio(data: NormalizedFinancialData[]): DebtRatioResult[] {
   return data

@@ -1,5 +1,5 @@
-import type { DartFinancialStatementItem } from "@/types/dart";
-import type { NormalizedFinancialData, StandardAccountKey } from "@/types/financial";
+import type { DartFinancialStatementItem } from "../../types/dart";
+import type { NormalizedFinancialData, StandardAccountKey } from "../../types/financial";
 
 const accountNameMap: Array<{
   key: StandardAccountKey;
@@ -90,7 +90,11 @@ export function normalizeFinancialStatement(params: {
     }
 
     const priority = statementPriority[item.sj_div ?? ""] ?? 0;
-    const nameScore = normalizeName(item.account_nm) === normalizeName(accountNameMap.find((x) => x.key === key)?.keywords[0]) ? 2 : 1;
+    const nameScore =
+      normalizeName(item.account_nm) ===
+      normalizeName(accountNameMap.find((x) => x.key === key)?.keywords[0])
+        ? 2
+        : 1;
     const score = priority * 10 + nameScore;
 
     if ((chosenScore.get(key) ?? -1) >= score) {

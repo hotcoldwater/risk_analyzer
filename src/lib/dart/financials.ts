@@ -1,19 +1,19 @@
-import { dartFetch } from "@/lib/dart/client";
-import type { DartFinancialStatementResponse } from "@/types/dart";
-import type { FsDiv, ReportCode } from "@/types/financial";
+import { dartFetch } from "./client";
+import type { DartFinancialStatementResponse } from "../../types/dart";
+import type { FsDiv, ReportCode } from "../../types/financial";
 
 export async function fetchFinancialStatement(params: {
   corpCode: string;
   year: string;
   reportCode: ReportCode;
   fsDiv: FsDiv;
-}): Promise<DartFinancialStatementResponse> {
+}, apiKey: string | undefined): Promise<DartFinancialStatementResponse> {
   return dartFetch<DartFinancialStatementResponse>("fnlttSinglAcntAll.json", {
     corp_code: params.corpCode,
     bsns_year: params.year,
     reprt_code: params.reportCode,
     fs_div: params.fsDiv
-  });
+  }, apiKey);
 }
 
 export async function fetchFinancialStatementsForPeriod(params: {
@@ -22,7 +22,7 @@ export async function fetchFinancialStatementsForPeriod(params: {
   endYear: number;
   reportCode: ReportCode;
   fsDiv: FsDiv;
-}): Promise<
+}, apiKey: string | undefined): Promise<
   Array<{
     year: number;
     response: DartFinancialStatementResponse | null;
@@ -44,7 +44,7 @@ export async function fetchFinancialStatementsForPeriod(params: {
           year: String(year),
           reportCode: params.reportCode,
           fsDiv: params.fsDiv
-        });
+        }, apiKey);
 
         return {
           year,
@@ -60,7 +60,7 @@ export async function fetchFinancialStatementsForPeriod(params: {
               year: String(year),
               reportCode: params.reportCode,
               fsDiv: "OFS"
-            });
+            }, apiKey);
 
             return {
               year,

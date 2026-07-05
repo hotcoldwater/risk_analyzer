@@ -1,9 +1,12 @@
 node_modules
+dist
+.wrangler
 .next
 .open-next
-out
-.env.local
 .env
+.env.*
+.dev.vars
+.dev.vars.*
 tsconfig.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*

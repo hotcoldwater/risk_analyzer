@@ -1,4 +1,4 @@
-import type { StandardAccountKey } from "@/types/financial";
+import type { StandardAccountKey } from "./financial";
 
 export type RiskSignalSeverity = "low" | "medium" | "high";
 

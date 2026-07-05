@@ -1,5 +1,5 @@
-import type { AuditRiskMapping } from "@/types/analysis";
-import type { StandardAccountKey } from "@/types/financial";
+import type { AuditRiskMapping } from "../../types/analysis";
+import type { StandardAccountKey } from "../../types/financial";
 
 export const auditRiskMapping: Partial<Record<StandardAccountKey, AuditRiskMapping>> = {
   accountsReceivable: {

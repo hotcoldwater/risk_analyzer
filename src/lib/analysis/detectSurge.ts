@@ -1,5 +1,5 @@
-import type { RiskSignal } from "@/types/analysis";
-import type { NormalizedFinancialData, StandardAccountKey } from "@/types/financial";
+import type { RiskSignal } from "../../types/analysis";
+import type { NormalizedFinancialData, StandardAccountKey } from "../../types/financial";
 
 const monitoredAccounts: StandardAccountKey[] = [
   "accountsReceivable",

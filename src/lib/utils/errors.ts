@@ -25,3 +25,11 @@ export function toKoreanErrorMessage(error: unknown): string {
 export function createApiError(message: string, code: string, status = 400) {
   return new AppError(message, code, status);
 }
+
+export function requireValue(value: string | undefined, message: string, code: string) {
+  if (!value) {
+    throw new AppError(message, code, 500);
+  }
+
+  return value;
+}
