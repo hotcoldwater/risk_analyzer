@@ -50,16 +50,23 @@ DART_API_KEY=your_dart_api_key_here
 
 ## Cloudflare 배포 방법
 
-이 프로젝트는 Next.js 기반이며 Cloudflare Pages 또는 Workers 배포를 전제로 작성했습니다.
+이 프로젝트는 `Next.js App Router + API Route`를 사용하므로 정적 Pages 배포가 아니라 `Cloudflare Workers + OpenNext` 방식으로 배포해야 합니다.
 
 권장 절차:
 
-1. Cloudflare에서 Next.js 배포용 프로젝트를 생성합니다.
-2. 빌드 명령을 `npm run build`로 설정합니다.
-3. `DART_API_KEY` 환경변수를 Cloudflare 프로젝트 환경변수에 추가합니다.
-4. 서버사이드 API route가 실행되는 배포 모드를 사용합니다.
+1. Cloudflare에서 Workers 기반 프로젝트를 사용합니다.
+2. 환경변수 `DART_API_KEY`를 `Build Variables and Secrets` 또는 Worker 환경변수에 추가합니다.
+3. 아래 명령으로 로컬 preview 또는 배포를 실행합니다.
 
-실제 배포 시에는 팀 표준에 맞춰 OpenNext Cloudflare 어댑터 또는 Cloudflare의 최신 Next.js 지원 방식을 선택하면 됩니다.
+```bash
+npm run preview
+npm run deploy
+```
+
+중요:
+
+- `risk-analyzer.pages.dev` 같은 정적 Pages 배포로 연결하면 `/api/*` 서버 라우트 때문에 404가 발생할 수 있습니다.
+- 이 저장소에는 `wrangler.jsonc`와 `open-next.config.ts`를 포함해 Workers 배포 구성을 추가했습니다.
 
 ## 프로젝트 구조
 
