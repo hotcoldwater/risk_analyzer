@@ -1,120 +1,120 @@
 # Risk Analyzer
 
-DART API 기반으로 기업 재무제표를 조회하고, 연도별 부채총계, 자본총계, 부채비율을 계산해 보여주는 Cloudflare Pages Functions MVP입니다.
+DART 재무제표를 조회해 부채총계, 자본총계, 부채비율을 분석하는 MVP입니다. 프론트는 Cloudflare Pages 정적 사이트로 배포하고, DART 호출은 Python `FastAPI + dart-fss` 백엔드에서 처리합니다.
 
-## 핵심 기능
+## 구조
 
-- 기업명으로 DART 기업 검색
-- 기업개황 조회
-- 분석기간별 재무제표 조회
-- 계정과목 정규화
-- 연도별 부채총계, 자본총계, 부채비율 표 출력
-- 간단한 부채비율 추이 그래프
-- 기본 위험 신호 탐지 골격 제공
-
-## 기술 스택
-
-- Vite
-- TypeScript
-- Cloudflare Pages Functions
-- DART Open API
+- 프론트: Vite 정적 웹앱
+- 백엔드: FastAPI
+- DART 연동: `dart-fss`
+- 프론트 배포: Cloudflare Pages
+- 백엔드 배포: Render Free Web Service
 
 ## 프로젝트 구조
 
 ```text
-functions/
-  api/
-    analyze.ts
-    search-company.ts
+backend/
+  app/
+    main.py
+  requirements.txt
 
 src/
   client/
     main.ts
   lib/
-    analysis/
-    dart/
     utils/
   styles/
     site.css
   types/
+
+render.yaml
 ```
 
-## 로컬 실행 방법
+## 동작 방식
+
+1. 사용자가 Cloudflare Pages 프론트에서 기업명을 검색합니다.
+2. 프론트가 FastAPI 백엔드의 `/search-company`를 호출합니다.
+3. FastAPI가 `dart-fss`로 기업 목록을 조회합니다.
+4. 사용자가 분석을 실행하면 프론트가 `/analyze`를 호출합니다.
+5. FastAPI가 `dart-fss`로 재무제표를 불러와 가공하고 결과를 반환합니다.
+
+## 로컬 실행
+
+프론트:
 
 ```bash
 npm install
 npm run dev
 ```
 
-정적 프론트는 `http://localhost:5173`에서 확인할 수 있습니다.
-
-Cloudflare Pages Functions 환경까지 같이 보려면:
+백엔드:
 
 ```bash
-npm run build
-npm run pages:dev
+python3 -m pip install -r backend/requirements.txt
+DART_API_KEY=your_dart_api_key_here npm run backend:dev
 ```
 
-## 환경변수 설정 방법
+프론트가 로컬 백엔드를 보게 하려면 `.env.local` 파일을 만들고 아래를 넣습니다.
 
-Cloudflare Pages Functions에서는 `DART_API_KEY`를 서버 환경변수로 넣어야 합니다.
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
 
-로컬 개발 예시:
+## 환경변수
+
+프론트 빌드 환경변수:
+
+```env
+VITE_API_BASE_URL=https://your-backend.onrender.com
+```
+
+백엔드 환경변수:
 
 ```env
 DART_API_KEY=your_dart_api_key_here
 ```
 
-Cloudflare 배포 시:
-
-1. Pages 프로젝트 선택
-2. `Settings`
-3. `Variables and secrets`
-4. `DART_API_KEY` 추가
-
 주의:
 
-- `.env*` 와 `.dev.vars*`는 커밋하지 않습니다.
-- DART API Key는 Pages Functions 서버 코드에서만 사용됩니다.
-- 브라우저 번들에는 포함되지 않습니다.
+- `VITE_API_BASE_URL`은 프론트가 호출할 백엔드 URL입니다.
+- `DART_API_KEY`는 FastAPI 백엔드에만 넣습니다.
+- DART 키를 Cloudflare Pages에 넣지 않습니다.
 
-## DART API Key 안내
+## Cloudflare Pages 배포
 
-금융감독원 Open DART API 키가 필요합니다. 키가 없으면 기업 검색과 분석 API는 오류 메시지를 반환합니다.
+이 저장소의 프론트를 Cloudflare Pages에 배포합니다.
 
-## Cloudflare 배포 방법
+설정:
 
-이 프로젝트는 `Cloudflare Pages + Pages Functions` 기준입니다.
-
-Pages 프로젝트 설정:
-
-- Framework preset: `Vite`
+- Framework preset: `Vite` 또는 `React (Vite)`
 - Build command: `npm run build`
 - Build output directory: `dist`
+- Environment variable: `VITE_API_BASE_URL=https://your-backend.onrender.com`
 
-그리고 `functions/` 디렉토리는 프로젝트 루트에 있어야 합니다. Cloudflare 공식 문서도 Pages Functions는 루트 `/functions` 디렉토리를 사용한다고 안내합니다. Sources: https://developers.cloudflare.com/pages/functions/get-started/ , https://developers.cloudflare.com/pages/functions/routing/
+## Render 배포
 
-배포 순서:
+이 저장소의 `backend/`를 Render Free Web Service로 배포합니다.
 
-1. GitHub 저장소 `hotcoldwater/risk_analyzer` 연결
-2. Build command를 `npm run build`로 설정
-3. Output directory를 `dist`로 설정
-4. `DART_API_KEY` 환경변수 추가
-5. Deploy
+설정:
+
+- Environment: `Python`
+- Root Directory: `backend`
+- Build Command: `pip install -r requirements.txt`
+- Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Environment Variable: `DART_API_KEY=your_dart_api_key_here`
+
+`render.yaml`도 포함되어 있습니다.
 
 ## 현재 한계
 
-- 계정과목 매핑은 핵심 계정 중심의 1차 규칙입니다.
-- 산업 평균, 동종업계 비교, 로그인, 저장 기능은 포함하지 않았습니다.
-- 기업별 공시 형식 차이로 일부 계정이 누락될 수 있습니다.
-- 연결재무제표가 없으면 별도재무제표로 재시도하지만 연도별 데이터 공백은 있을 수 있습니다.
+- `dart-fss`의 `web` 데이터셋 기반이라 기업별 표 구조 차이의 영향을 받을 수 있습니다.
+- 산업 평균, 동종업계 비교, 저장 기능은 아직 없습니다.
+- 보고서 유형은 `annual`, `half`, `quarter` 수준으로 매핑합니다.
 
-## 향후 확장 계획
+## 향후 확장
 
-- 계정과목 급변 탐지 고도화
+- 계정 급변 탐지 정교화
 - 순이익과 영업현금흐름 괴리 분석 고도화
-- 감사위험 계정 자동 추천 UI
-- 기준점 선택 기능
-- 가중평균 리스크 스코어링
-- 산업 평균/중앙값 자동 계산
-- Cloudflare D1/KV 캐싱
+- 감사위험 계정 추천 UI
+- 기업/조회 결과 캐싱
+- 산업 비교와 점수화

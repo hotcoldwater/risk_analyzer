@@ -4,6 +4,8 @@ import type { RiskSignal } from "../types/analysis";
 import type { CompanyProfile, CorpSummary } from "../types/dart";
 import type { DebtRatioResult, FsDiv, ReportCode } from "../types/financial";
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+
 type ApiSuccess<T> = {
   success: true;
   data: T;
@@ -12,6 +14,7 @@ type ApiSuccess<T> = {
 type ApiFailure = {
   success: false;
   error: string;
+  detail?: string;
 };
 
 type SearchResponse = ApiSuccess<CorpSummary[]> | ApiFailure;
@@ -132,6 +135,10 @@ const fsDivSelect = document.querySelector<HTMLSelectElement>("#fsDiv")!;
 const searchResultsNode = document.querySelector<HTMLDivElement>("#search-results")!;
 const searchErrorNode = document.querySelector<HTMLDivElement>("#search-error")!;
 const resultArea = document.querySelector<HTMLElement>("#result-area")!;
+
+function apiUrl(path: string) {
+  return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
+}
 
 yearOptions.forEach((year, index) => {
   startYearSelect.insertAdjacentHTML(
@@ -362,12 +369,12 @@ async function handleSearch() {
   analyzeButton.disabled = true;
 
   try {
-    const response = await fetch(`/api/search-company?query=${encodeURIComponent(query)}`);
+    const response = await fetch(apiUrl(`/search-company?query=${encodeURIComponent(query)}`));
     const payload = (await response.json()) as SearchResponse;
 
-    if (!payload.success) {
-      throw new Error(payload.error);
-    }
+      if (!payload.success) {
+        throw new Error(payload.error || payload.detail || "기업을 찾을 수 없습니다.");
+      }
 
     state.searchResults = payload.data;
     if (payload.data.length === 0) {
@@ -397,7 +404,7 @@ async function handleAnalyze() {
   renderResult();
 
   try {
-    const response = await fetch("/api/analyze", {
+    const response = await fetch(apiUrl("/analyze"), {
       method: "POST",
       headers: {
         "content-type": "application/json"
@@ -413,9 +420,9 @@ async function handleAnalyze() {
     });
 
     const payload = (await response.json()) as AnalyzeResponse;
-    if (!payload.success) {
-      throw new Error(payload.error);
-    }
+      if (!payload.success) {
+        throw new Error(payload.error || payload.detail || "분석 중 오류가 발생했습니다.");
+      }
 
     state.result = payload.data;
   } catch (error) {
