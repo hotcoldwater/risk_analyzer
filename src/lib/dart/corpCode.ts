@@ -30,8 +30,7 @@ async function loadCorpCodesWithKey(apiKey: string | undefined): Promise<CorpSum
   url.searchParams.set("crtfc_key", verifiedApiKey);
 
   const response = await fetch(url.toString(), {
-    method: "GET",
-    cache: "force-cache"
+    method: "GET"
   });
 
   if (!response.ok) {
