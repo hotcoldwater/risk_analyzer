@@ -16,12 +16,16 @@ from app.dart_client import CorporationNotFoundError, find_corporation, initiali
 from app.financial_extractor import FinancialDataError, extract_latest_liabilities_and_equity
 from app.samsung_financials import get_samsung_financial_statements, sync_samsung_financial_statements
 from app.schemas import (
+    AnalysisDefinition,
+    AnalysisResponse,
     DebtRatioResponse,
     ErrorResponse,
     FinancialStatementRecord,
     SamsungFinancialStatementsResponse,
     SamsungFinancialStatementsSyncResponse,
 )
+from app.supabase_analysis import fetch_supported_analyses, run_analysis
+from app.supabase_financials import fetch_latest_debt_ratio_data
 
 
 settings = get_settings()
@@ -29,7 +33,8 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    initialize_dart()
+    if settings.data_source == "dart":
+        initialize_dart()
     initialize_database()
     yield
 
@@ -86,6 +91,67 @@ def health() -> dict[str, str]:
 
 
 @app.get(
+    "/api/analyses",
+    response_model=list[AnalysisDefinition],
+    responses={500: {"model": ErrorResponse}},
+)
+def list_supported_analyses() -> list[AnalysisDefinition]:
+    if settings.data_source != "supabase":
+        return [
+            AnalysisDefinition(
+                analysisCode="DEBT_RATIO",
+                analysisName="부채비율",
+                analysisGroup="basic_ratio",
+                notes="DART 실시간 조회 기반",
+            )
+        ]
+
+    definitions = fetch_supported_analyses(settings.supabase_database_url)
+    return [
+        AnalysisDefinition(
+            analysisCode=item.analysis_code,
+            analysisName=item.analysis_name,
+            analysisGroup=item.analysis_group,
+            notes=item.notes,
+        )
+        for item in definitions
+    ]
+
+
+@app.get(
+    "/api/analyze",
+    response_model=AnalysisResponse,
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def analyze_company(query: str, analysis_code: str) -> AnalysisResponse:
+    if settings.data_source != "supabase":
+        raise HTTPException(status_code=400, detail="이 분석 API는 Supabase 데이터 소스에서만 사용할 수 있습니다.")
+
+    try:
+        result = run_analysis(settings.supabase_database_url, query, analysis_code)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return AnalysisResponse(
+        companyId=result.company_id,
+        companyName=result.company_name,
+        stockCode=result.stock_code,
+        analysisCode=result.analysis_code,
+        analysisName=result.analysis_name,
+        analysisGroup=result.analysis_group,
+        year=result.year,
+        summary=result.summary,
+        source=result.source,
+        availableYears=result.available_years,
+        metrics=result.metrics,
+        highlights=result.highlights,
+        warnings=result.warnings,
+    )
+
+
+@app.get(
     "/api/debt-ratio",
     response_model=DebtRatioResponse,
     responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
@@ -101,27 +167,43 @@ def get_debt_ratio(query: str) -> DebtRatioResponse:
         return DebtRatioResponse(**cached_payload, cached=True)
 
     try:
-        corporation_match = find_corporation(normalized_query)
-        extraction = extract_latest_liabilities_and_equity(corporation_match.corp)
-        debt_ratio = calculate_debt_ratio(extraction.liabilities, extraction.equity)
+        if settings.data_source == "supabase":
+            result = fetch_latest_debt_ratio_data(settings.supabase_database_url, normalized_query)
+            debt_ratio = calculate_debt_ratio(result.liabilities, result.equity)
+            payload = {
+                "corpName": result.company_name,
+                "corpCode": result.company_id,
+                "year": result.year,
+                "liabilities": result.liabilities,
+                "equity": result.equity,
+                "debtRatio": debt_ratio,
+                "unit": "KRW",
+                "source": result.source,
+                "warnings": [],
+            }
+        else:
+            corporation_match = find_corporation(normalized_query)
+            extraction = extract_latest_liabilities_and_equity(corporation_match.corp)
+            debt_ratio = calculate_debt_ratio(extraction.liabilities, extraction.equity)
+            payload = {
+                "corpName": corporation_match.corp.corp_name,
+                "corpCode": corporation_match.corp.corp_code,
+                "year": extraction.year,
+                "liabilities": extraction.liabilities,
+                "equity": extraction.equity,
+                "debtRatio": debt_ratio,
+                "unit": extraction.unit,
+                "source": "DART",
+                "warnings": corporation_match.warnings,
+            }
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except CorporationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FinancialDataError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    payload = {
-        "corpName": corporation_match.corp.corp_name,
-        "corpCode": corporation_match.corp.corp_code,
-        "year": extraction.year,
-        "liabilities": extraction.liabilities,
-        "equity": extraction.equity,
-        "debtRatio": debt_ratio,
-        "unit": extraction.unit,
-        "source": "DART",
-        "warnings": corporation_match.warnings,
-    }
 
     set_cached_analysis(cache_key, payload)
     return DebtRatioResponse(**payload, cached=False)

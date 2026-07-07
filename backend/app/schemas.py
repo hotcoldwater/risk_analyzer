@@ -68,3 +68,37 @@ class SamsungFinancialStatementsSyncResponse(BaseModel):
     updated: int
     total: int
     years: list[str]
+
+
+class AnalysisDefinition(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    analysis_code: str = Field(alias="analysisCode")
+    analysis_name: str = Field(alias="analysisName")
+    analysis_group: str = Field(alias="analysisGroup")
+    notes: str | None = None
+
+
+class AnalysisMetric(BaseModel):
+    label: str
+    value: str
+    unit: str | None = None
+    tone: str = "default"
+
+
+class AnalysisResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    company_id: str = Field(alias="companyId")
+    company_name: str = Field(alias="companyName")
+    stock_code: str | None = Field(default=None, alias="stockCode")
+    analysis_code: str = Field(alias="analysisCode")
+    analysis_name: str = Field(alias="analysisName")
+    analysis_group: str = Field(alias="analysisGroup")
+    year: str
+    summary: str
+    source: str = "Supabase"
+    available_years: list[str] = Field(alias="availableYears")
+    metrics: list[AnalysisMetric]
+    highlights: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

@@ -6,6 +6,10 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: DATA_SOURCE
+        value: supabase
+      - key: SUPABASE_DATABASE_URL
+        sync: false
       - key: DART_API_KEY
         sync: false
       - key: FRONTEND_ORIGIN

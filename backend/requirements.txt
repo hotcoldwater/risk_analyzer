@@ -5,3 +5,4 @@ pandas
 python-dotenv
 pydantic
 cachetools
+psycopg[binary]
