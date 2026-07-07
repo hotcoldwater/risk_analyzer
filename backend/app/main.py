@@ -11,9 +11,17 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.analyzer import calculate_debt_ratio
 from app.cache import build_cache_key, get_cached_analysis, set_cached_analysis
 from app.config import get_settings
+from app.database import initialize_database
 from app.dart_client import CorporationNotFoundError, find_corporation, initialize_dart
 from app.financial_extractor import FinancialDataError, extract_latest_liabilities_and_equity
-from app.schemas import DebtRatioResponse, ErrorResponse
+from app.samsung_financials import get_samsung_financial_statements, sync_samsung_financial_statements
+from app.schemas import (
+    DebtRatioResponse,
+    ErrorResponse,
+    FinancialStatementRecord,
+    SamsungFinancialStatementsResponse,
+    SamsungFinancialStatementsSyncResponse,
+)
 
 
 settings = get_settings()
@@ -22,6 +30,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_dart()
+    initialize_database()
     yield
 
 
@@ -116,3 +125,45 @@ def get_debt_ratio(query: str) -> DebtRatioResponse:
 
     set_cached_analysis(cache_key, payload)
     return DebtRatioResponse(**payload, cached=False)
+
+
+@app.post(
+    "/api/db/samsung-financial-statements/sync",
+    response_model=SamsungFinancialStatementsSyncResponse,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def sync_samsung_financials() -> SamsungFinancialStatementsSyncResponse:
+    try:
+        result = sync_samsung_financial_statements()
+    except CorporationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FinancialDataError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return SamsungFinancialStatementsSyncResponse(
+        corpName=result.corp_name,
+        corpCode=result.corp_code,
+        inserted=result.inserted,
+        updated=result.updated,
+        total=result.total,
+        years=result.years,
+    )
+
+
+@app.get(
+    "/api/db/samsung-financial-statements",
+    response_model=SamsungFinancialStatementsResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+def list_samsung_financials() -> SamsungFinancialStatementsResponse:
+    rows = get_samsung_financial_statements()
+    if not rows:
+        raise HTTPException(status_code=404, detail="DB에 저장된 삼성전자 재무제표가 없습니다. 먼저 동기화를 실행해 주세요.")
+
+    first_row = rows[0]
+    return SamsungFinancialStatementsResponse(
+        corpName=first_row["corp_name"],
+        corpCode=first_row["corp_code"],
+        count=len(rows),
+        items=[FinancialStatementRecord(**row) for row in rows],
+    )

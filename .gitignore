@@ -10,3 +10,4 @@ dist/
 backend/.venv/
 frontend/node_modules/
 frontend/dist/
+backend/financial_statements.db

@@ -101,3 +101,36 @@ def extract_latest_liabilities_and_equity(corp) -> ExtractionResult:
             )
 
     raise FinancialDataError("해당 기업의 최신 재무제표 데이터를 찾을 수 없습니다.")
+
+
+def extract_annual_financial_statements(corp, years: int = 5) -> list[ExtractionResult]:
+    current_year = datetime.now().year
+    results: list[ExtractionResult] = []
+
+    for year in range(current_year, current_year - years, -1):
+        for fs_div, statement_type in (("CFS", "연결재무제표"), ("OFS", "별도재무제표")):
+            rows = _fetch_statement_rows(corp.corp_code, year, fs_div)
+            statement_rows = [row for row in rows if _row_matches_statement(row)]
+            if not statement_rows:
+                continue
+
+            liabilities, liabilities_account_name = _select_account(statement_rows, LIABILITIES_CANDIDATES)
+            equity, equity_account_name = _select_account(statement_rows, EQUITY_CANDIDATES)
+
+            results.append(
+                ExtractionResult(
+                    year=str(year),
+                    liabilities=liabilities,
+                    equity=equity,
+                    liabilitiesAccountName=liabilities_account_name,
+                    equityAccountName=equity_account_name,
+                    statementType=statement_type,
+                    unit="KRW",
+                )
+            )
+            break
+
+    if not results:
+        raise FinancialDataError("해당 기업의 연도별 재무제표 데이터를 찾을 수 없습니다.")
+
+    return results
