@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   fetchAnalyses,
@@ -8,19 +8,11 @@ import {
   runAnalyses,
 } from "./api";
 
-const primaryAnalysisCodes = [
-  "DEBT_RATIO",
-  "OPERATING_MARGIN",
-  "NET_MARGIN",
-  "GROSS_MARGIN",
-  "INTEREST_COVERAGE",
-  "OCF_TO_NET_INCOME",
-];
-
 function formatCompactKrw(value) {
   if (value == null) {
     return "N/A";
   }
+
   const absolute = Math.abs(value);
   if (absolute >= 1_0000_0000_0000) {
     return `${(value / 1_0000_0000_0000).toFixed(1)}조`;
@@ -29,6 +21,58 @@ function formatCompactKrw(value) {
     return `${(value / 1_0000_0000).toFixed(1)}억`;
   }
   return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 }).format(value);
+}
+
+function buildTrendConfig(result) {
+  const map = {
+    DEBT_RATIO: [
+      { key: "revenue", title: "매출" },
+      { key: "netIncome", title: "당기순이익" },
+    ],
+    OPERATING_MARGIN: [
+      { key: "revenue", title: "매출" },
+      { key: "operatingIncome", title: "영업이익" },
+    ],
+    NET_MARGIN: [
+      { key: "revenue", title: "매출" },
+      { key: "netIncome", title: "당기순이익" },
+    ],
+    GROSS_MARGIN: [
+      { key: "revenue", title: "매출" },
+      { key: "grossProfit", title: "매출총이익" },
+    ],
+    INTEREST_COVERAGE: [
+      { key: "operatingIncome", title: "영업이익" },
+      { key: "netIncome", title: "당기순이익" },
+    ],
+    OCF_TO_NET_INCOME: [
+      { key: "netIncome", title: "당기순이익" },
+      { key: "revenue", title: "매출" },
+    ],
+    TREND_3Y: [
+      { key: "revenue", title: "매출" },
+      { key: "grossProfit", title: "매출총이익" },
+      { key: "operatingIncome", title: "영업이익" },
+      { key: "netIncome", title: "당기순이익" },
+    ],
+    AR_VS_REVENUE: [{ key: "revenue", title: "매출" }],
+    INVENTORY_VS_REVENUE: [{ key: "revenue", title: "매출" }],
+    NET_INCOME_VS_OCF: [
+      { key: "netIncome", title: "당기순이익" },
+      { key: "revenue", title: "매출" },
+    ],
+    ANOMALY_RULES_MVP: [
+      { key: "revenue", title: "매출" },
+      { key: "operatingIncome", title: "영업이익" },
+      { key: "netIncome", title: "당기순이익" },
+    ],
+    ALTMAN_BOOK_PROXY: [
+      { key: "revenue", title: "매출" },
+      { key: "netIncome", title: "당기순이익" },
+    ],
+  };
+
+  return map[result.analysisCode] || [{ key: "revenue", title: "매출" }];
 }
 
 function TrendCard({ title, points, accessor }) {
@@ -62,7 +106,14 @@ function TrendCard({ title, points, accessor }) {
       <span>{title}</span>
       <strong>{formatCompactKrw(current)}</strong>
       <svg className="trend-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <polyline fill="none" points={polyline} stroke="currentColor" strokeWidth="3" vectorEffect="non-scaling-stroke" />
+        <polyline
+          className="trend-line"
+          fill="none"
+          points={polyline}
+          stroke="currentColor"
+          strokeWidth="3"
+          vectorEffect="non-scaling-stroke"
+        />
       </svg>
       <div className="trend-years">
         {points.map((point) => (
@@ -73,10 +124,12 @@ function TrendCard({ title, points, accessor }) {
   );
 }
 
-function SingleResultModal({ result, onClose }) {
+function SingleResultModal({ overview, result, onClose }) {
   if (!result) {
     return null;
   }
+
+  const trendConfigs = buildTrendConfig(result);
 
   return (
     <div className="modal-backdrop" onClick={onClose} role="presentation">
@@ -100,6 +153,19 @@ function SingleResultModal({ result, onClose }) {
             </article>
           ))}
         </div>
+
+        {overview?.series?.length ? (
+          <div className="modal-trend-grid">
+            {trendConfigs.map((config) => (
+              <TrendCard
+                key={`${result.analysisCode}-${config.key}`}
+                accessor={(point) => point[config.key]}
+                points={overview.series}
+                title={config.title}
+              />
+            ))}
+          </div>
+        ) : null}
 
         <div className="detail-grid">
           <article className="detail-panel">
@@ -177,6 +243,7 @@ function App() {
   const [query, setQuery] = useState("");
   const [analyses, setAnalyses] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState(null);
   const [overview, setOverview] = useState(null);
   const [singleResult, setSingleResult] = useState(null);
@@ -219,7 +286,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!query.trim()) {
+    if (!query.trim() || !showSuggestions) {
       setSuggestions([]);
       return;
     }
@@ -247,17 +314,13 @@ function App() {
       active = false;
       clearTimeout(timer);
     };
-  }, [query]);
-
-  const primaryAnalyses = useMemo(
-    () => analyses.filter((item) => primaryAnalysisCodes.includes(item.analysisCode)),
-    [analyses],
-  );
+  }, [query, showSuggestions]);
 
   async function loadOverview(company) {
     setSelectedCompany(company);
     setQuery(company.companyName);
     setSuggestions([]);
+    setShowSuggestions(false);
     setIsOverviewLoading(true);
     setError("");
 
@@ -340,11 +403,19 @@ function App() {
           <div className="search-field">
             <input
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setShowSuggestions(true);
+              }}
+              onFocus={() => {
+                if (query.trim()) {
+                  setShowSuggestions(true);
+                }
+              }}
               placeholder="기업명 또는 종목코드"
               type="text"
             />
-            {suggestions.length ? (
+            {showSuggestions && suggestions.length ? (
               <div className="suggestion-box">
                 {suggestions.map((item) => (
                   <button key={item.companyId} className="suggestion-item" onClick={() => loadOverview(item)} type="button">
@@ -401,7 +472,7 @@ function App() {
                     <h2>개별 분석</h2>
                   </div>
                   <div className="action-grid">
-                    {primaryAnalyses.map((analysis) => (
+                    {analyses.map((analysis) => (
                       <button
                         key={analysis.analysisCode}
                         className="action-card"
@@ -461,7 +532,7 @@ function App() {
         )}
       </main>
 
-      <SingleResultModal onClose={() => setSingleResult(null)} result={singleResult} />
+      <SingleResultModal overview={overview} onClose={() => setSingleResult(null)} result={singleResult} />
       <ReportModal onClose={() => setReportResults([])} results={reportResults} />
     </div>
   );

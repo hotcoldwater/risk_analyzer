@@ -292,6 +292,12 @@ em {
   color: var(--text);
 }
 
+.trend-line {
+  stroke-dasharray: 240;
+  stroke-dashoffset: 240;
+  animation: drawLine 1s ease forwards;
+}
+
 .trend-years {
   display: flex;
   justify-content: space-between;
@@ -445,6 +451,13 @@ em {
   color: #0f3fd1;
 }
 
+.modal-trend-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -480,6 +493,12 @@ em {
   margin-bottom: 12px;
 }
 
+@keyframes drawLine {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 @media (max-width: 1080px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -493,6 +512,7 @@ em {
 
   .trend-grid,
   .metric-grid,
+  .modal-trend-grid,
   .action-grid,
   .report-layout,
   .detail-grid {
@@ -517,6 +537,7 @@ em {
   .trend-grid,
   .metric-grid,
   .metric-grid.compact,
+  .modal-trend-grid,
   .action-grid,
   .report-layout,
   .detail-grid,
