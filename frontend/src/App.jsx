@@ -1,17 +1,192 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { fetchAnalyses, runAnalysis } from "./api";
+import {
+  fetchAnalyses,
+  fetchCompanyOverview,
+  fetchCompanySearch,
+  runAnalysis,
+  runAnalyses,
+} from "./api";
 
-const recentQueries = ["삼성전자", "SK하이닉스", "00126380"];
+const primaryAnalysisCodes = [
+  "DEBT_RATIO",
+  "OPERATING_MARGIN",
+  "NET_MARGIN",
+  "GROSS_MARGIN",
+  "INTEREST_COVERAGE",
+  "OCF_TO_NET_INCOME",
+];
+
+function formatCompactKrw(value) {
+  if (value == null) {
+    return "N/A";
+  }
+  const absolute = Math.abs(value);
+  if (absolute >= 1_0000_0000_0000) {
+    return `${(value / 1_0000_0000_0000).toFixed(1)}조`;
+  }
+  if (absolute >= 1_0000_0000) {
+    return `${(value / 1_0000_0000).toFixed(1)}억`;
+  }
+  return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 }).format(value);
+}
+
+function TrendCard({ title, points, accessor }) {
+  const values = points.map((point) => accessor(point)).filter((value) => value != null);
+  const current = values.at(-1) ?? null;
+
+  if (!values.length) {
+    return (
+      <article className="trend-card">
+        <span>{title}</span>
+        <strong>N/A</strong>
+      </article>
+    );
+  }
+
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = maxValue - minValue || 1;
+
+  const polyline = points
+    .map((point, index) => {
+      const value = accessor(point);
+      const x = (index / Math.max(points.length - 1, 1)) * 100;
+      const y = value == null ? 50 : 100 - ((value - minValue) / range) * 100;
+      return `${x},${y}`;
+    })
+    .join(" ");
+
+  return (
+    <article className="trend-card">
+      <span>{title}</span>
+      <strong>{formatCompactKrw(current)}</strong>
+      <svg className="trend-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <polyline fill="none" points={polyline} stroke="currentColor" strokeWidth="3" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <div className="trend-years">
+        {points.map((point) => (
+          <em key={`${title}-${point.year}`}>{point.year}</em>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function SingleResultModal({ result, onClose }) {
+  if (!result) {
+    return null;
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose} role="presentation">
+      <section className="result-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+        <header className="modal-head">
+          <div>
+            <p className="modal-kicker">{result.analysisName}</p>
+            <h3>{result.companyName}</h3>
+            <p className="modal-meta">{result.year}</p>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button">
+            닫기
+          </button>
+        </header>
+
+        <div className="metric-grid">
+          {result.metrics.map((metric) => (
+            <article key={metric.label} className="metric-panel">
+              <span>{metric.label}</span>
+              <strong className={metric.tone === "primary" ? "metric-primary" : ""}>{metric.value}</strong>
+            </article>
+          ))}
+        </div>
+
+        <div className="detail-grid">
+          <article className="detail-panel">
+            <h4>핵심</h4>
+            <ul>
+              {result.highlights.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </article>
+          <article className="detail-panel">
+            <h4>경고</h4>
+            {result.warnings.length ? (
+              <ul>
+                {result.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="empty-text">경고 없음</p>
+            )}
+          </article>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ReportModal({ results, onClose }) {
+  if (!results.length) {
+    return null;
+  }
+
+  const first = results[0];
+
+  return (
+    <div className="modal-backdrop" onClick={onClose} role="presentation">
+      <section className="report-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+        <header className="modal-head">
+          <div>
+            <p className="modal-kicker">리포트 센터</p>
+            <h3>{first.companyName}</h3>
+            <p className="modal-meta">{results.length}개 분석</p>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button">
+            닫기
+          </button>
+        </header>
+
+        <div className="report-stack">
+          {results.map((result) => (
+            <section key={result.analysisCode} className="report-block">
+              <div className="report-block-head">
+                <h4>{result.analysisName}</h4>
+                <p>{result.summary}</p>
+              </div>
+              <div className="metric-grid compact">
+                {result.metrics.map((metric) => (
+                  <article key={`${result.analysisCode}-${metric.label}`} className="metric-panel">
+                    <span>{metric.label}</span>
+                    <strong className={metric.tone === "primary" ? "metric-primary" : ""}>{metric.value}</strong>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function App() {
+  const [mode, setMode] = useState("company");
   const [query, setQuery] = useState("");
-  const [selectedAnalysis, setSelectedAnalysis] = useState("");
   const [analyses, setAnalyses] = useState([]);
-  const [result, setResult] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
+  const [selectedCompany, setSelectedCompany] = useState(null);
+  const [overview, setOverview] = useState(null);
+  const [singleResult, setSingleResult] = useState(null);
+  const [reportResults, setReportResults] = useState([]);
+  const [selectedReportCodes, setSelectedReportCodes] = useState([]);
   const [error, setError] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [isLoadingAnalyses, setIsLoadingAnalyses] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isOverviewLoading, setIsOverviewLoading] = useState(false);
+  const [isReportLoading, setIsReportLoading] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -23,7 +198,7 @@ function App() {
           return;
         }
         setAnalyses(data);
-        setSelectedAnalysis(data[0]?.analysisCode || "");
+        setSelectedReportCodes(data.map((item) => item.analysisCode));
       } catch (caught) {
         if (!isMounted) {
           return;
@@ -43,174 +218,251 @@ function App() {
     };
   }, []);
 
-  async function handleAnalyze(nextQuery) {
-    const trimmed = nextQuery.trim();
-    if (!trimmed) {
-      setError("기업명 또는 기업코드를 입력해 주세요.");
-      setResult(null);
-      return;
-    }
-    if (!selectedAnalysis) {
-      setError("분석 항목을 선택해 주세요.");
+  useEffect(() => {
+    if (!query.trim()) {
+      setSuggestions([]);
       return;
     }
 
-    setIsLoading(true);
+    let active = true;
+    const timer = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const items = await fetchCompanySearch(query);
+        if (active) {
+          setSuggestions(items);
+        }
+      } catch {
+        if (active) {
+          setSuggestions([]);
+        }
+      } finally {
+        if (active) {
+          setIsSearching(false);
+        }
+      }
+    }, 150);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [query]);
+
+  const primaryAnalyses = useMemo(
+    () => analyses.filter((item) => primaryAnalysisCodes.includes(item.analysisCode)),
+    [analyses],
+  );
+
+  async function loadOverview(company) {
+    setSelectedCompany(company);
+    setQuery(company.companyName);
+    setSuggestions([]);
+    setIsOverviewLoading(true);
     setError("");
 
     try {
-      const data = await runAnalysis(trimmed, selectedAnalysis);
-      setResult(data);
+      const data = await fetchCompanyOverview(company.companyId);
+      setOverview(data);
     } catch (caught) {
-      setResult(null);
-      if (caught instanceof Error) {
-        setError(caught.message);
-      } else {
-        setError("분석 서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.");
-      }
+      setOverview(null);
+      setError(caught instanceof Error ? caught.message : "개요 조회에 실패했습니다.");
     } finally {
-      setIsLoading(false);
+      setIsOverviewLoading(false);
     }
   }
 
-  return (
-    <div className="landing-shell">
-      <main className="landing-main">
-        <section className="landing-card">
-          <p className="eyebrow">AuditRisk-AI</p>
-          <h1>DART 기반 재무제표 이상징후 및 감사위험 탐지 서비스</h1>
-          <p className="landing-copy">
-            기업명 또는 기업코드를 입력하고 분석 항목을 선택하면, Supabase에 적재된 표준화
-            재무데이터를 바탕으로 결과를 팝업 형태로 제공합니다.
-          </p>
+  async function handleSingleAnalysis(analysisCode) {
+    if (!selectedCompany) {
+      setError("기업을 먼저 선택해 주세요.");
+      return;
+    }
+    setError("");
+    try {
+      const data = await runAnalysis(selectedCompany.companyId, analysisCode);
+      setSingleResult(data);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "분석을 완료하지 못했습니다.");
+    }
+  }
 
-          <div className="search-panel">
-            <label className="search-label" htmlFor="corp-query">
-              기업명 또는 기업코드
-            </label>
+  async function handleReportRun() {
+    if (!selectedCompany) {
+      setError("기업을 먼저 선택해 주세요.");
+      return;
+    }
+    if (!selectedReportCodes.length) {
+      setError("리포트에 포함할 분석을 선택해 주세요.");
+      return;
+    }
+
+    setIsReportLoading(true);
+    setError("");
+    try {
+      const data = await runAnalyses(selectedCompany.companyId, selectedReportCodes);
+      setReportResults(data.items);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "리포트 생성에 실패했습니다.");
+    } finally {
+      setIsReportLoading(false);
+    }
+  }
+
+  function toggleReportCode(code) {
+    setSelectedReportCodes((current) =>
+      current.includes(code) ? current.filter((item) => item !== code) : [...current, code],
+    );
+  }
+
+  return (
+    <div className="app-shell">
+      <aside className="app-sidebar">
+        <button className={`nav-link ${mode === "company" ? "active" : ""}`} onClick={() => setMode("company")} type="button">
+          기업 분석
+        </button>
+        <button className={`nav-link ${mode === "report" ? "active" : ""}`} onClick={() => setMode("report")} type="button">
+          리포트 센터
+        </button>
+      </aside>
+
+      <main className="app-main">
+        <header className="topbar">
+          <h1>재무제표 분석</h1>
+          {selectedCompany ? (
+            <div className="company-badge">
+              <strong>{selectedCompany.companyName}</strong>
+              <span>{selectedCompany.stockCode || selectedCompany.companyId}</span>
+            </div>
+          ) : null}
+        </header>
+
+        <section className="search-strip">
+          <div className="search-field">
             <input
-              id="corp-query"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="예: 삼성전자 또는 00126380"
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  handleAnalyze(query);
-                }
-              }}
+              placeholder="기업명 또는 종목코드"
+              type="text"
             />
-
-            <label className="search-label" htmlFor="analysis-select">
-              분석 항목
-            </label>
-            <select
-              id="analysis-select"
-              value={selectedAnalysis}
-              onChange={(event) => setSelectedAnalysis(event.target.value)}
-              disabled={isLoadingAnalyses}
-            >
-              <option value="">{isLoadingAnalyses ? "분석 목록 불러오는 중..." : "분석 항목을 선택하세요"}</option>
-              {analyses.map((analysis) => (
-                <option key={analysis.analysisCode} value={analysis.analysisCode}>
-                  {analysis.analysisName}
-                </option>
-              ))}
-            </select>
-
-            <button disabled={isLoading || isLoadingAnalyses} onClick={() => handleAnalyze(query)} type="button">
-              {isLoading ? "분석 중..." : "분석하기"}
-            </button>
-
-            <div className="recent-list">
-              <span>최근 예시</span>
-              {recentQueries.map((item) => (
-                <button key={item} className="recent-chip" onClick={() => setQuery(item)} type="button">
-                  {item}
-                </button>
-              ))}
-            </div>
+            {suggestions.length ? (
+              <div className="suggestion-box">
+                {suggestions.map((item) => (
+                  <button key={item.companyId} className="suggestion-item" onClick={() => loadOverview(item)} type="button">
+                    <div>
+                      <strong>{item.companyName}</strong>
+                      <span>{item.stockCode || item.companyId}</span>
+                    </div>
+                    <em>{formatCompactKrw(item.marketCapKrw)}</em>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
+          <button
+            className="primary-button"
+            disabled={!selectedCompany || isOverviewLoading}
+            onClick={() => loadOverview(selectedCompany)}
+            type="button"
+          >
+            {isSearching ? "검색 중" : isOverviewLoading ? "조회 중" : "조회"}
+          </button>
         </section>
 
-        {error ? (
-          <div className="message-card error-card">
-            <p className="message-title">분석을 완료하지 못했습니다.</p>
-            <p>{error}</p>
-          </div>
-        ) : null}
+        {error ? <div className="status-bar error">{error}</div> : null}
 
-        {!result && !isLoading && !error ? (
-          <div className="message-card idle-card">
-            <p className="message-title">분석 대기 중입니다.</p>
-            <p>기업과 분석 항목을 선택한 뒤 분석 버튼을 눌러 주세요.</p>
-          </div>
-        ) : null}
-      </main>
+        {mode === "company" ? (
+          <section className="workspace">
+            {overview ? (
+              <>
+                <div className="summary-strip">
+                  <div>
+                    <span>시가총액</span>
+                    <strong>{formatCompactKrw(overview.marketCapKrw)}</strong>
+                  </div>
+                  <div>
+                    <span>현재가</span>
+                    <strong>{formatCompactKrw(overview.currentPriceKrw)}</strong>
+                  </div>
+                  <div>
+                    <span>시장</span>
+                    <strong>{overview.market || "N/A"}</strong>
+                  </div>
+                </div>
 
-      {result ? (
-        <div className="modal-backdrop" onClick={() => setResult(null)} role="presentation">
-          <div className="modal-card" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-            <div className="modal-head">
-              <div>
-                <p className="eyebrow">Analysis Result</p>
-                <h2>{result.analysisName}</h2>
-                <p className="corp-code">
-                  {result.companyName} · {result.companyId} · {result.year}
-                </p>
+                <div className="trend-grid">
+                  <TrendCard accessor={(point) => point.revenue} points={overview.series} title="매출" />
+                  <TrendCard accessor={(point) => point.grossProfit} points={overview.series} title="매출총이익" />
+                  <TrendCard accessor={(point) => point.operatingIncome} points={overview.series} title="영업이익" />
+                  <TrendCard accessor={(point) => point.netIncome} points={overview.series} title="당기순이익" />
+                </div>
+
+                <div className="action-section">
+                  <div className="section-title-row">
+                    <h2>개별 분석</h2>
+                  </div>
+                  <div className="action-grid">
+                    {primaryAnalyses.map((analysis) => (
+                      <button
+                        key={analysis.analysisCode}
+                        className="action-card"
+                        onClick={() => handleSingleAnalysis(analysis.analysisCode)}
+                        type="button"
+                      >
+                        <strong>{analysis.analysisName}</strong>
+                        <span>{analysis.notes}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="empty-stage">기업을 선택하면 3개년 흐름이 표시됩니다.</div>
+            )}
+          </section>
+        ) : (
+          <section className="workspace report-layout">
+            <div className="report-sidebar">
+              <div className="section-title-row">
+                <h2>리포트 센터</h2>
               </div>
-              <button className="modal-close" onClick={() => setResult(null)} type="button">
-                닫기
+              <div className="report-list">
+                {analyses.map((analysis) => (
+                  <label key={analysis.analysisCode} className="report-item">
+                    <input
+                      checked={selectedReportCodes.includes(analysis.analysisCode)}
+                      onChange={() => toggleReportCode(analysis.analysisCode)}
+                      type="checkbox"
+                    />
+                    <div>
+                      <strong>{analysis.analysisName}</strong>
+                      <span>{analysis.notes}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="report-main">
+              <div className="report-meta">
+                <div>
+                  <span>대상 기업</span>
+                  <strong>{selectedCompany ? selectedCompany.companyName : "미선택"}</strong>
+                </div>
+                <div>
+                  <span>선택 분석</span>
+                  <strong>{selectedReportCodes.length}</strong>
+                </div>
+              </div>
+              <button className="primary-button wide" disabled={isLoadingAnalyses || isReportLoading} onClick={handleReportRun} type="button">
+                {isReportLoading ? "리포트 생성 중" : "리포트 생성"}
               </button>
             </div>
+          </section>
+        )}
+      </main>
 
-            <p className="modal-summary">{result.summary}</p>
-
-            <div className="modal-grid">
-              {result.metrics.map((metric) => (
-                <article
-                  key={metric.label}
-                  className={`data-card ${metric.tone === "primary" ? "hero-metric" : ""}`}
-                >
-                  <span>{metric.label}</span>
-                  <strong>{metric.value}</strong>
-                </article>
-              ))}
-            </div>
-
-            <div className="modal-columns">
-              <article className="panel-card">
-                <div className="panel-head">
-                  <h4>분석 메모</h4>
-                  <span className="status-pill">{result.analysisGroup}</span>
-                </div>
-                <ul className="summary-list">
-                  {result.highlights.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                  <li>가용 연도: {result.availableYears.join(", ")}</li>
-                  <li>데이터 소스: {result.source}</li>
-                </ul>
-              </article>
-
-              <article className="panel-card">
-                <div className="panel-head">
-                  <h4>주의사항</h4>
-                  <span className="status-pill muted">{result.warnings.length}건</span>
-                </div>
-                {result.warnings.length ? (
-                  <ul className="warning-list">
-                    {result.warnings.map((warning) => (
-                      <li key={warning}>{warning}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>탐지된 주요 경고는 없습니다.</p>
-                )}
-              </article>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <SingleResultModal onClose={() => setSingleResult(null)} result={singleResult} />
+      <ReportModal onClose={() => setReportResults([])} results={reportResults} />
     </div>
   );
 }

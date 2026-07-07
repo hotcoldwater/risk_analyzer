@@ -79,6 +79,38 @@ class AnalysisDefinition(BaseModel):
     notes: str | None = None
 
 
+class CompanySuggestion(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    company_id: str = Field(alias="companyId")
+    company_name: str = Field(alias="companyName")
+    stock_code: str | None = Field(default=None, alias="stockCode")
+    market: str | None = None
+    market_rank: int | None = Field(default=None, alias="marketRank")
+    market_cap_krw: int | None = Field(default=None, alias="marketCapKrw")
+
+
+class FinancialSeriesPoint(BaseModel):
+    year: str
+    revenue: float | None = None
+    gross_profit: float | None = Field(default=None, alias="grossProfit")
+    operating_income: float | None = Field(default=None, alias="operatingIncome")
+    net_income: float | None = Field(default=None, alias="netIncome")
+
+
+class CompanyOverviewResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    company_id: str = Field(alias="companyId")
+    company_name: str = Field(alias="companyName")
+    stock_code: str | None = Field(default=None, alias="stockCode")
+    market: str | None = None
+    market_rank: int | None = Field(default=None, alias="marketRank")
+    market_cap_krw: int | None = Field(default=None, alias="marketCapKrw")
+    current_price_krw: int | None = Field(default=None, alias="currentPriceKrw")
+    series: list[FinancialSeriesPoint]
+
+
 class AnalysisMetric(BaseModel):
     label: str
     value: str
@@ -102,3 +134,11 @@ class AnalysisResponse(BaseModel):
     metrics: list[AnalysisMetric]
     highlights: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class MultiAnalysisResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    query: str
+    analysis_count: int = Field(alias="analysisCount")
+    items: list[AnalysisResponse]

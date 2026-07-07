@@ -15,6 +15,28 @@ class CompanyMatch:
 
 
 @dataclass(frozen=True)
+class CompanySearchResult:
+    company_id: str
+    company_name: str
+    stock_code: str | None
+    market: str | None
+    market_rank: int | None
+    market_cap_krw: int | None
+
+
+@dataclass(frozen=True)
+class CompanyOverview:
+    company_id: str
+    company_name: str
+    stock_code: str | None
+    market: str | None
+    market_rank: int | None
+    market_cap_krw: int | None
+    current_price_krw: int | None
+    series: list[dict[str, float | str | None]]
+
+
+@dataclass(frozen=True)
 class AnalysisDefinitionRecord:
     analysis_code: str
     analysis_name: str
@@ -491,6 +513,28 @@ def _fetch_company_match(connection: psycopg.Connection, query: str) -> CompanyM
     return CompanyMatch(row["company_id"], row["company_name"], row["stock_code"])
 
 
+def _fetch_company_by_id(connection: psycopg.Connection, company_id: str) -> CompanySearchResult:
+    sql = """
+        SELECT company_id, company_name, stock_code, market, market_rank, market_cap_krw
+        FROM public.companies
+        WHERE company_id = %(company_id)s
+        LIMIT 1
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(sql, {"company_id": company_id})
+        row = cursor.fetchone()
+    if row is None:
+        raise LookupError("기업 정보를 찾지 못했습니다.")
+    return CompanySearchResult(
+        row["company_id"],
+        row["company_name"],
+        row["stock_code"],
+        row["market"],
+        row["market_rank"],
+        row["market_cap_krw"],
+    )
+
+
 def _fetch_financial_index(connection: psycopg.Connection, company_id: str) -> FinancialIndex:
     sql = """
         SELECT year, standard_account_id, amount
@@ -505,6 +549,98 @@ def _fetch_financial_index(connection: psycopg.Connection, company_id: str) -> F
         year = int(row["year"])
         financials.setdefault(year, {})[row["standard_account_id"]] = float(row["amount"])
     return financials
+
+
+def search_companies(database_url: str, query: str, limit: int = 12) -> list[CompanySearchResult]:
+    normalized_query = query.strip()
+    if not normalized_query:
+        return []
+
+    sql = """
+        SELECT company_id, company_name, stock_code, market, market_rank, market_cap_krw
+        FROM (
+            SELECT
+                company_id,
+                company_name,
+                stock_code,
+                market,
+                market_rank,
+                market_cap_krw,
+                CASE
+                    WHEN company_name ILIKE %(starts_with)s THEN 1
+                    WHEN stock_code ILIKE %(starts_with)s THEN 2
+                    WHEN company_name ILIKE %(contains)s THEN 3
+                    WHEN stock_code ILIKE %(contains)s THEN 4
+                    ELSE 5
+                END AS match_rank
+            FROM public.companies
+            WHERE company_name ILIKE %(contains)s
+               OR stock_code ILIKE %(contains)s
+        ) matched
+        ORDER BY match_rank, market_cap_krw DESC NULLS LAST, company_name
+        LIMIT %(limit)s
+    """
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                sql,
+                {
+                    "starts_with": f"{normalized_query}%",
+                    "contains": f"%{normalized_query}%",
+                    "limit": limit,
+                },
+            )
+            rows = cursor.fetchall()
+    return [
+        CompanySearchResult(
+            row["company_id"],
+            row["company_name"],
+            row["stock_code"],
+            row["market"],
+            row["market_rank"],
+            row["market_cap_krw"],
+        )
+        for row in rows
+    ]
+
+
+def fetch_company_overview(database_url: str, company_id: str) -> CompanyOverview:
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        company = _fetch_company_by_id(connection, company_id)
+        financials = _fetch_financial_index(connection, company_id)
+
+        price_sql = """
+            SELECT current_price_krw
+            FROM public.companies
+            WHERE company_id = %(company_id)s
+            LIMIT 1
+        """
+        with connection.cursor() as cursor:
+            cursor.execute(price_sql, {"company_id": company_id})
+            price_row = cursor.fetchone()
+
+    years = sorted(financials)
+    series = [
+        {
+            "year": str(year),
+            "revenue": _latest_value(financials, year, "IS_REVENUE"),
+            "grossProfit": _latest_value(financials, year, "IS_GROSS_PROFIT"),
+            "operatingIncome": _latest_value(financials, year, "IS_OPERATING_INCOME"),
+            "netIncome": _latest_value(financials, year, "IS_NET_INCOME"),
+        }
+        for year in years
+    ]
+
+    return CompanyOverview(
+        company.company_id,
+        company.company_name,
+        company.stock_code,
+        company.market,
+        company.market_rank,
+        company.market_cap_krw,
+        price_row["current_price_krw"] if price_row else None,
+        series,
+    )
 
 
 def fetch_supported_analyses(database_url: str) -> list[AnalysisDefinitionRecord]:

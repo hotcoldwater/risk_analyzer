@@ -17,6 +17,9 @@ from app.financial_extractor import FinancialDataError, extract_latest_liabiliti
 from app.samsung_financials import get_samsung_financial_statements, sync_samsung_financial_statements
 from app.schemas import (
     AnalysisDefinition,
+    CompanyOverviewResponse,
+    CompanySuggestion,
+    MultiAnalysisResponse,
     AnalysisResponse,
     DebtRatioResponse,
     ErrorResponse,
@@ -24,7 +27,7 @@ from app.schemas import (
     SamsungFinancialStatementsResponse,
     SamsungFinancialStatementsSyncResponse,
 )
-from app.supabase_analysis import fetch_supported_analyses, run_analysis
+from app.supabase_analysis import fetch_company_overview, fetch_supported_analyses, run_analysis, search_companies
 from app.supabase_financials import fetch_latest_debt_ratio_data
 
 
@@ -91,6 +94,55 @@ def health() -> dict[str, str]:
 
 
 @app.get(
+    "/api/company-search",
+    response_model=list[CompanySuggestion],
+    responses={500: {"model": ErrorResponse}},
+)
+def company_search(q: str) -> list[CompanySuggestion]:
+    if settings.data_source != "supabase":
+        return []
+
+    items = search_companies(settings.supabase_database_url, q)
+    return [
+        CompanySuggestion(
+            companyId=item.company_id,
+            companyName=item.company_name,
+            stockCode=item.stock_code,
+            market=item.market,
+            marketRank=item.market_rank,
+            marketCapKrw=item.market_cap_krw,
+        )
+        for item in items
+    ]
+
+
+@app.get(
+    "/api/company-overview",
+    response_model=CompanyOverviewResponse,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def company_overview(company_id: str) -> CompanyOverviewResponse:
+    if settings.data_source != "supabase":
+        raise HTTPException(status_code=400, detail="이 개요 API는 Supabase 데이터 소스에서만 사용할 수 있습니다.")
+
+    try:
+        overview = fetch_company_overview(settings.supabase_database_url, company_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return CompanyOverviewResponse(
+        companyId=overview.company_id,
+        companyName=overview.company_name,
+        stockCode=overview.stock_code,
+        market=overview.market,
+        marketRank=overview.market_rank,
+        marketCapKrw=overview.market_cap_krw,
+        currentPriceKrw=overview.current_price_krw,
+        series=overview.series,
+    )
+
+
+@app.get(
     "/api/analyses",
     response_model=list[AnalysisDefinition],
     responses={500: {"model": ErrorResponse}},
@@ -118,6 +170,24 @@ def list_supported_analyses() -> list[AnalysisDefinition]:
     ]
 
 
+def _serialize_analysis_response(result) -> AnalysisResponse:
+    return AnalysisResponse(
+        companyId=result.company_id,
+        companyName=result.company_name,
+        stockCode=result.stock_code,
+        analysisCode=result.analysis_code,
+        analysisName=result.analysis_name,
+        analysisGroup=result.analysis_group,
+        year=result.year,
+        summary=result.summary,
+        source=result.source,
+        availableYears=result.available_years,
+        metrics=result.metrics,
+        highlights=result.highlights,
+        warnings=result.warnings,
+    )
+
+
 @app.get(
     "/api/analyze",
     response_model=AnalysisResponse,
@@ -134,20 +204,35 @@ def analyze_company(query: str, analysis_code: str) -> AnalysisResponse:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return AnalysisResponse(
-        companyId=result.company_id,
-        companyName=result.company_name,
-        stockCode=result.stock_code,
-        analysisCode=result.analysis_code,
-        analysisName=result.analysis_name,
-        analysisGroup=result.analysis_group,
-        year=result.year,
-        summary=result.summary,
-        source=result.source,
-        availableYears=result.available_years,
-        metrics=result.metrics,
-        highlights=result.highlights,
-        warnings=result.warnings,
+    return _serialize_analysis_response(result)
+
+
+@app.get(
+    "/api/analyze-many",
+    response_model=MultiAnalysisResponse,
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def analyze_company_many(query: str, analysis_codes: str) -> MultiAnalysisResponse:
+    if settings.data_source != "supabase":
+        raise HTTPException(status_code=400, detail="이 분석 API는 Supabase 데이터 소스에서만 사용할 수 있습니다.")
+
+    normalized_codes = [code.strip() for code in analysis_codes.split(",") if code.strip()]
+    if not normalized_codes:
+        raise HTTPException(status_code=400, detail="분석 항목을 하나 이상 선택해 주세요.")
+
+    deduped_codes = list(dict.fromkeys(normalized_codes))
+
+    try:
+        results = [run_analysis(settings.supabase_database_url, query, code) for code in deduped_codes]
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return MultiAnalysisResponse(
+        query=query.strip(),
+        analysisCount=len(results),
+        items=[_serialize_analysis_response(item) for item in results],
     )
 
 
