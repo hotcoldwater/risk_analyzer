@@ -39,11 +39,8 @@ app = FastAPI(title="Defense Cash Conversion Analyzer API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.frontend_origin,
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ],
+    allow_origin_regex=r"https://.*\.risk-analyzer\.pages\.dev|https://.*\.pages\.dev|http://localhost:5173|http://localhost:3000",
+    allow_origins=[settings.frontend_origin],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

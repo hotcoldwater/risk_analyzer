@@ -7,7 +7,7 @@ function resolveBaseUrl() {
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
     if (host.includes("pages.dev") || host.includes("risk-analyzer")) {
-      return "https://risk-analyzer-backend.onrender.com";
+      return "https://risk-analyzer-backend-fi6w.onrender.com";
     }
   }
 
