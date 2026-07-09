@@ -177,6 +177,28 @@ class MetricDetailRow(BaseModel):
     note: str | None = None
 
 
+class AverageAccountRow(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    account_name: str = Field(alias="accountName")
+    current_value: float | None = Field(default=None, alias="currentValue")
+    current_display: str = Field(alias="currentDisplay")
+    previous_value: float | None = Field(default=None, alias="previousValue")
+    previous_display: str = Field(alias="previousDisplay")
+
+
+class AverageMemberRow(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    corp_code: str = Field(alias="corpCode")
+    corp_name: str = Field(alias="corpName")
+    metric_value: float | None = Field(default=None, alias="metricValue")
+    metric_display: str = Field(alias="metricDisplay")
+    source_basis: str | None = Field(default=None, alias="sourceBasis")
+    source_label: str = Field(alias="sourceLabel")
+    accounts: list[AverageAccountRow]
+
+
 class LiquidityMetricResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -194,6 +216,9 @@ class LiquidityMetricResponse(BaseModel):
     average_value: float | None = Field(default=None, alias="averageValue")
     average_display: str = Field(alias="averageDisplay")
     average_sample_size: int = Field(alias="averageSampleSize")
+    average_eligible_company_count: int = Field(alias="averageEligibleCompanyCount")
+    average_members: list[AverageMemberRow] = Field(alias="averageMembers")
+    average_coverage_years: list[int] = Field(alias="averageCoverageYears")
     series: list[LiquiditySeriesPoint]
     details: list[MetricDetailRow]
     formula: str

@@ -365,6 +365,17 @@ def _format_currency(value: float | None) -> str:
     return f"{value:,.0f}원"
 
 
+def _format_compact_currency(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    absolute = abs(value)
+    if absolute >= 1_0000_0000_0000:
+        return f"{value / 1_0000_0000_0000:,.2f}조원"
+    if absolute >= 1_0000_0000:
+        return f"{value / 1_0000_0000:,.1f}억원"
+    return _format_currency(value)
+
+
 def _format_metric_display(metric_code: str, value: float | None) -> str:
     if metric_code in {"revenue_growth", "operating_margin", "contract_asset_ratio", "net_contract_asset_ratio"}:
         return _format_percent(value)
@@ -385,9 +396,9 @@ def _metric_detail_rows(metric_code: str, series: dict[int, dict[str, Any]]) -> 
             {
                 "label": account,
                 "currentValue": current.get(account),
-                "currentDisplay": _format_currency(current.get(account)),
+                "currentDisplay": _format_compact_currency(current.get(account)),
                 "previousValue": previous.get(account),
-                "previousDisplay": _format_currency(previous.get(account)),
+                "previousDisplay": _format_compact_currency(previous.get(account)),
                 "note": current_snapshot["notes"].get(account) or (previous_snapshot or {}).get("notes", {}).get(account),
             }
         )
@@ -405,19 +416,95 @@ def _metric_detail_rows(metric_code: str, series: dict[int, dict[str, Any]]) -> 
     return details
 
 
-def _average_series(
+def _metric_required_years(metric_code: str) -> list[int]:
+    if metric_code == "revenue_growth":
+        return [2022, 2023, 2024, 2025]
+    return YEARS
+
+
+def _peer_metric_snapshot(
+    metric_code: str,
+    corp_code: str,
+    company_index: dict[str, dict[int, list[dict[str, Any]]]],
+) -> dict[str, Any]:
+    accounts = LIQUIDITY_METRICS[metric_code]["accounts"]
+    series = _series_for_company(company_index.get(corp_code, {}), accounts)
+    points = {}
+    for year in YEARS:
+        current_snapshot = series[year]
+        previous_snapshot = series.get(year - 1)
+        points[year] = _metric_value(metric_code, current_snapshot, previous_snapshot)
+    return {"series": series, "points": points}
+
+
+def _eligible_peer_codes(
     metric_code: str,
     peer_codes: list[str],
     company_index: dict[str, dict[int, list[dict[str, Any]]]],
+) -> list[str]:
+    required_years = _metric_required_years(metric_code)
+    eligible = []
+    for corp_code in peer_codes:
+        snapshot = _peer_metric_snapshot(metric_code, corp_code, company_index)
+        if all(snapshot["points"].get(year) is not None for year in required_years):
+            eligible.append(corp_code)
+    return eligible
+
+
+def _average_member_rows(
+    metric_code: str,
+    eligible_peer_codes: list[str],
+    company_index: dict[str, dict[int, list[dict[str, Any]]]],
+) -> list[dict[str, Any]]:
+    accounts = LIQUIDITY_METRICS[metric_code]["accounts"]
+    members = []
+    for corp_code in eligible_peer_codes:
+        series = _series_for_company(company_index.get(corp_code, {}), accounts)
+        current_snapshot = series[CURRENT_YEAR]
+        previous_snapshot = series.get(CURRENT_YEAR - 1)
+        metric_value = _metric_value(metric_code, current_snapshot, previous_snapshot)
+        if metric_value is None:
+            continue
+        account_values = []
+        for account_name in sorted(set(accounts)):
+            account_values.append(
+                {
+                    "accountName": account_name,
+                    "currentValue": current_snapshot["values"].get(account_name),
+                    "currentDisplay": _format_compact_currency(current_snapshot["values"].get(account_name)),
+                    "previousValue": previous_snapshot["values"].get(account_name) if previous_snapshot else None,
+                    "previousDisplay": _format_compact_currency(previous_snapshot["values"].get(account_name)) if previous_snapshot else "N/A",
+                }
+            )
+
+        members.append(
+            {
+                "corpCode": corp_code,
+                "corpName": company_index.get(corp_code, {}).get(CURRENT_YEAR, [{}])[0].get("corp_name", corp_code)
+                if company_index.get(corp_code, {}).get(CURRENT_YEAR)
+                else corp_code,
+                "metricValue": metric_value,
+                "metricDisplay": _format_metric_display(metric_code, metric_value),
+                "sourceBasis": current_snapshot["basis"],
+                "sourceLabel": current_snapshot["source_label"],
+                "accounts": account_values,
+            }
+        )
+    return sorted(members, key=lambda item: item["corpName"])
+
+
+def _average_series(
+    metric_code: str,
+    eligible_peer_codes: list[str],
+    company_index: dict[str, dict[int, list[dict[str, Any]]]],
 ) -> list[dict[str, Any]]:
     points = []
-    accounts = LIQUIDITY_METRICS[metric_code]["accounts"]
     for year in YEARS:
         values: list[float] = []
-        for corp_code in peer_codes:
-            series = _series_for_company(company_index.get(corp_code, {}), accounts)
-            current_snapshot = series[year]
-            previous_snapshot = series.get(year - 1)
+        for corp_code in eligible_peer_codes:
+            snapshot = _peer_metric_snapshot(metric_code, corp_code, company_index)
+            current_snapshot = snapshot["series"][year]
+            previous_snapshot = snapshot["series"].get(year - 1)
             value = _metric_value(metric_code, current_snapshot, previous_snapshot)
             if value is not None:
                 values.append(value)
@@ -466,7 +553,9 @@ def get_liquidity_metric(
     previous_snapshot = company_series.get(CURRENT_YEAR - 1)
     current_value = _metric_value(metric_code, current_snapshot, previous_snapshot)
     current_reason = _metric_reason(metric_code, current_snapshot, previous_snapshot)
-    average_points = _average_series(metric_code, peer_codes, company_index)
+    eligible_peer_codes = _eligible_peer_codes(metric_code, peer_codes, company_index)
+    average_points = _average_series(metric_code, eligible_peer_codes, company_index)
+    average_members = _average_member_rows(metric_code, eligible_peer_codes, company_index)
 
     series = []
     for year in YEARS:
@@ -504,6 +593,9 @@ def get_liquidity_metric(
         "averageValue": current_average["averageValue"],
         "averageDisplay": _format_metric_display(metric_code, current_average["averageValue"]),
         "averageSampleSize": current_average["sampleSize"],
+        "averageEligibleCompanyCount": len(eligible_peer_codes),
+        "averageMembers": average_members,
+        "averageCoverageYears": _metric_required_years(metric_code),
         "series": series,
         "details": _metric_detail_rows(metric_code, company_series),
         "formula": metric_definition["description"],

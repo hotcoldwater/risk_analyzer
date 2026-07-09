@@ -38,7 +38,44 @@ function formatCompactNumber(value) {
   return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 }).format(value);
 }
 
-function LineChart({ points, valueKey, compareKey, unitLabel }) {
+function formatTooltipValue(value, metricCode) {
+  if (value == null) {
+    return "N/A";
+  }
+  if (metricCode === "cfo_conversion") {
+    return `${value.toFixed(2)}배`;
+  }
+  return `${value.toFixed(1)}%`;
+}
+
+function buildSegments(points, targetKey, minValue, range) {
+  const segments = [];
+  let current = [];
+
+  points.forEach((point, index) => {
+    const value = point[targetKey];
+    if (value == null) {
+      if (current.length > 1) {
+        segments.push(current);
+      }
+      current = [];
+      return;
+    }
+
+    const x = (index / Math.max(points.length - 1, 1)) * 100;
+    const y = 100 - ((value - minValue) / range) * 100;
+    current.push(`${x},${y}`);
+  });
+
+  if (current.length > 1) {
+    segments.push(current);
+  }
+
+  return segments;
+}
+
+function LineChart({ points, valueKey, compareKey, unitLabel, metricCode }) {
+  const [hoveredYear, setHoveredYear] = useState(null);
   const companyValues = points.map((point) => point[valueKey]).filter((value) => value != null);
   const averageValues = points.map((point) => point[compareKey]).filter((value) => value != null);
   const allValues = [...companyValues, ...averageValues];
@@ -50,17 +87,9 @@ function LineChart({ points, valueKey, compareKey, unitLabel }) {
   const minValue = Math.min(...allValues);
   const maxValue = Math.max(...allValues);
   const range = maxValue - minValue || 1;
-
-  function buildPath(targetKey) {
-    return points
-      .map((point, index) => {
-        const value = point[targetKey];
-        const x = (index / Math.max(points.length - 1, 1)) * 100;
-        const y = value == null ? 50 : 100 - ((value - minValue) / range) * 100;
-        return `${x},${y}`;
-      })
-      .join(" ");
-  }
+  const companySegments = buildSegments(points, valueKey, minValue, range);
+  const averageSegments = buildSegments(points, compareKey, minValue, range);
+  const hoveredPoint = hoveredYear == null ? null : points.find((point) => point.year === hoveredYear);
 
   return (
     <div className="chart-card">
@@ -81,9 +110,36 @@ function LineChart({ points, valueKey, compareKey, unitLabel }) {
         </div>
       </div>
       <svg className="metric-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <polyline className="metric-line average" fill="none" points={buildPath(compareKey)} />
-        <polyline className="metric-line company" fill="none" points={buildPath(valueKey)} />
+        {averageSegments.map((segment, index) => (
+          <polyline key={`avg-${index}`} className="metric-line average" fill="none" points={segment.join(" ")} />
+        ))}
+        {companySegments.map((segment, index) => (
+          <polyline key={`company-${index}`} className="metric-line company" fill="none" points={segment.join(" ")} />
+        ))}
+        {points.map((point, index) => {
+          const x = (index / Math.max(points.length - 1, 1)) * 100;
+          return (
+            <rect
+              key={point.year}
+              x={Math.max(0, x - 8)}
+              y="0"
+              width="16"
+              height="100"
+              className="chart-hitbox"
+              onMouseEnter={() => setHoveredYear(point.year)}
+              onMouseLeave={() => setHoveredYear(null)}
+            />
+          );
+        })}
       </svg>
+      {hoveredPoint ? (
+        <div className="chart-tooltip">
+          <strong>{hoveredPoint.year}</strong>
+          <span>기업: {formatTooltipValue(hoveredPoint.companyValue, metricCode)}</span>
+          <span>비교 평균: {formatTooltipValue(hoveredPoint.averageValue, metricCode)}</span>
+          <em>표본 {hoveredPoint.sampleSize}개</em>
+        </div>
+      ) : null}
       <div className="chart-years">
         {points.map((point) => (
           <div key={point.year}>
@@ -134,17 +190,48 @@ function MetricsSelector({ selectedMetric, onSelect }) {
   );
 }
 
-function DetailTable({ details }) {
+function DetailTable({ details, averageMembers, averageCoverageYears, averageSampleSize }) {
   return (
-    <div className="detail-table">
-      {details.map((detail) => (
-        <div key={detail.label} className="detail-row">
-          <strong>{detail.label}</strong>
-          <span>{detail.currentDisplay}</span>
-          <span>{detail.previousDisplay}</span>
-          <em>{detail.note || ""}</em>
+    <div className="detail-stack">
+      <div className="detail-table">
+        {details.map((detail) => (
+          <div key={detail.label} className="detail-row">
+            <strong>{detail.label}</strong>
+            <span>{detail.currentDisplay}</span>
+            <span>{detail.previousDisplay}</span>
+            <em>{detail.note || ""}</em>
+          </div>
+        ))}
+      </div>
+
+      <div className="average-detail-card">
+        <div className="average-detail-head">
+          <strong>평균 계산 사용 표본</strong>
+          <span>
+            {averageCoverageYears.join(", ")} 전 기간 존재 기업 {averageSampleSize}개
+          </span>
         </div>
-      ))}
+        <div className="average-member-list">
+          {averageMembers.map((member) => (
+            <article key={member.corpCode} className="average-member">
+              <div className="average-member-head">
+                <strong>{member.corpName}</strong>
+                <span>{member.metricDisplay}</span>
+              </div>
+              <em>{member.sourceLabel}</em>
+              <div className="average-account-grid">
+                {member.accounts.map((account) => (
+                  <div key={`${member.corpCode}-${account.accountName}`} className="average-account">
+                    <strong>{account.accountName}</strong>
+                    <span>{account.currentDisplay}</span>
+                    <span>{account.previousDisplay}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -215,12 +302,20 @@ function LiquidityPanel({
 
           <LineChart
             compareKey="averageValue"
+            metricCode={selectedMetric}
             points={metricData.series}
             unitLabel={selectedMetric === "cfo_conversion" ? "배수" : "퍼센트"}
             valueKey="companyValue"
           />
 
-          {showDetails ? <DetailTable details={metricData.details} /> : null}
+          {showDetails ? (
+            <DetailTable
+              averageCoverageYears={metricData.averageCoverageYears}
+              averageMembers={metricData.averageMembers}
+              averageSampleSize={metricData.averageSampleSize}
+              details={metricData.details}
+            />
+          ) : null}
         </>
       ) : null}
     </div>
