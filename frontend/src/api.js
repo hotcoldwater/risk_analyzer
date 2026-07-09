@@ -1,4 +1,20 @@
-const baseUrl = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
+function resolveBaseUrl() {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl) {
+    return envUrl.replace(/\/$/, "");
+  }
+
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host.includes("pages.dev") || host.includes("risk-analyzer")) {
+      return "https://risk-analyzer-backend.onrender.com";
+    }
+  }
+
+  return "http://localhost:8000";
+}
+
+const baseUrl = resolveBaseUrl();
 
 async function parseResponse(response) {
   if (!response.ok) {

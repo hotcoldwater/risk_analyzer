@@ -520,14 +520,8 @@ function App() {
 
   return (
     <div className="app-shell">
-      <main className="landing">
-        <section className="hero-panel">
-          <p className="hero-kicker">Defense Cash Conversion Risk Console</p>
-          <h1>기업명, 종목코드, 기업코드로 바로 찾고 2025년 현금화 리스크를 읽는다.</h1>
-          <p className="hero-copy">
-            검색 후 모달에서 현금화 리스크, 이상징후, 비교 그룹 평균과 5개년 추이를 한 번에 확인할 수 있다.
-          </p>
-
+      <main className="landing minimal">
+        <section className="search-stage">
           <form className="search-shell" onSubmit={handleSubmit}>
             <div className="search-field">
               <input
@@ -550,30 +544,10 @@ function App() {
               {isResolving ? "검색 중" : "검색"}
             </button>
           </form>
-
-          <div className="hero-hints">
-            <span>자동완성 클릭 시 바로 분석 모달 오픈</span>
-            <span>정확히 일치하는 기업명·종목코드·기업코드는 엔터만으로 검색</span>
-            <span>{isSearching ? "후보 기업 검색 중" : "기준 데이터: companies_basic"}</span>
-          </div>
-        </section>
-
-        <section className="info-strip">
-          <article>
-            <span>당기 기준</span>
-            <strong>2025년 고정</strong>
-          </article>
-          <article>
-            <span>재무제표 우선순위</span>
-            <strong>CFS 우선, 없으면 OFS</strong>
-          </article>
-          <article>
-            <span>비교 범위</span>
-            <strong>A / AB / ABC 그룹</strong>
-          </article>
         </section>
 
         {error ? <div className="status-banner error">{error}</div> : null}
+        {isSearching ? <div className="search-status">검색 중</div> : null}
       </main>
 
       <AnalysisModal
