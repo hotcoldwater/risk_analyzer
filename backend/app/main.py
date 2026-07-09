@@ -8,27 +8,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.analyzer import calculate_debt_ratio
-from app.cache import build_cache_key, get_cached_analysis, set_cached_analysis
 from app.config import get_settings
 from app.database import initialize_database
-from app.dart_client import CorporationNotFoundError, find_corporation, initialize_dart
-from app.financial_extractor import FinancialDataError, extract_latest_liabilities_and_equity
-from app.samsung_financials import get_samsung_financial_statements, sync_samsung_financial_statements
-from app.schemas import (
-    AnalysisDefinition,
-    CompanyOverviewResponse,
-    CompanySuggestion,
-    MultiAnalysisResponse,
-    AnalysisResponse,
-    DebtRatioResponse,
-    ErrorResponse,
-    FinancialStatementRecord,
-    SamsungFinancialStatementsResponse,
-    SamsungFinancialStatementsSyncResponse,
+from app.defense_service import (
+    get_anomaly_analysis,
+    get_company_profile,
+    get_liquidity_metric,
+    resolve_company,
+    search_companies,
 )
-from app.supabase_analysis import fetch_company_overview, fetch_supported_analyses, run_analysis, search_companies
-from app.supabase_financials import fetch_latest_debt_ratio_data
+from app.schemas import (
+    AnomalyAnalysisResponse,
+    CompanyProfileResponse,
+    CompanySuggestion,
+    ErrorResponse,
+    LiquidityMetricResponse,
+)
 
 
 settings = get_settings()
@@ -36,16 +31,11 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if settings.data_source == "dart":
-        initialize_dart()
     initialize_database()
     yield
 
 
-app = FastAPI(
-    title="DART Financial Risk Analyzer API",
-    lifespan=lifespan,
-)
+app = FastAPI(title="Defense Cash Conversion Analyzer API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,10 +72,7 @@ async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONRespons
 
 @app.get("/")
 def root() -> dict[str, str]:
-    return {
-        "service": "DART Financial Risk Analyzer API",
-        "status": "ok",
-    }
+    return {"service": "Defense Cash Conversion Analyzer API", "status": "ok"}
 
 
 @app.get("/health")
@@ -99,238 +86,73 @@ def health() -> dict[str, str]:
     responses={500: {"model": ErrorResponse}},
 )
 def company_search(q: str) -> list[CompanySuggestion]:
-    if settings.data_source != "supabase":
-        return []
-
     items = search_companies(settings.supabase_database_url, q)
     return [
         CompanySuggestion(
-            companyId=item.company_id,
-            companyName=item.company_name,
-            stockCode=item.stock_code,
-            market=item.market,
-            marketRank=item.market_rank,
-            marketCapKrw=item.market_cap_krw,
+            companyId=item["corp_code"],
+            companyName=item["corp_name"],
+            stockCode=item["stock_code"],
+            market=item.get("market"),
         )
         for item in items
     ]
 
 
 @app.get(
-    "/api/company-overview",
-    response_model=CompanyOverviewResponse,
+    "/api/company-resolve",
+    response_model=CompanyProfileResponse,
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
-def company_overview(company_id: str) -> CompanyOverviewResponse:
-    if settings.data_source != "supabase":
-        raise HTTPException(status_code=400, detail="이 개요 API는 Supabase 데이터 소스에서만 사용할 수 있습니다.")
-
-    try:
-        overview = fetch_company_overview(settings.supabase_database_url, company_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    return CompanyOverviewResponse(
-        companyId=overview.company_id,
-        companyName=overview.company_name,
-        stockCode=overview.stock_code,
-        market=overview.market,
-        marketRank=overview.market_rank,
-        marketCapKrw=overview.market_cap_krw,
-        currentPriceKrw=overview.current_price_krw,
-        series=overview.series,
-    )
+def company_resolve(query: str) -> CompanyProfileResponse:
+    match = resolve_company(settings.supabase_database_url, query)
+    if match is None:
+        raise HTTPException(status_code=404, detail="해당 기업정보가 존재하지 않습니다.")
+    return CompanyProfileResponse(**get_company_profile(settings.supabase_database_url, match["corp_code"]))
 
 
 @app.get(
-    "/api/analyses",
-    response_model=list[AnalysisDefinition],
-    responses={500: {"model": ErrorResponse}},
+    "/api/company-profile",
+    response_model=CompanyProfileResponse,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
-def list_supported_analyses() -> list[AnalysisDefinition]:
-    if settings.data_source != "supabase":
-        return [
-            AnalysisDefinition(
-                analysisCode="DEBT_RATIO",
-                analysisName="부채비율",
-                analysisGroup="basic_ratio",
-                notes="DART 실시간 조회 기반",
-            )
-        ]
+def company_profile(corp_code: str) -> CompanyProfileResponse:
+    try:
+        payload = get_company_profile(settings.supabase_database_url, corp_code)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return CompanyProfileResponse(**payload)
 
-    definitions = fetch_supported_analyses(settings.supabase_database_url)
-    return [
-        AnalysisDefinition(
-            analysisCode=item.analysis_code,
-            analysisName=item.analysis_name,
-            analysisGroup=item.analysis_group,
-            notes=item.notes,
+
+@app.get(
+    "/api/analysis/liquidity-metric",
+    response_model=LiquidityMetricResponse,
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def liquidity_metric(corp_code: str, metric_code: str, group_scope: str = "A") -> LiquidityMetricResponse:
+    try:
+        payload = get_liquidity_metric(
+            settings.supabase_database_url,
+            corp_code=corp_code,
+            metric_code=metric_code,
+            group_scope=group_scope,
         )
-        for item in definitions
-    ]
-
-
-def _serialize_analysis_response(result) -> AnalysisResponse:
-    return AnalysisResponse(
-        companyId=result.company_id,
-        companyName=result.company_name,
-        stockCode=result.stock_code,
-        analysisCode=result.analysis_code,
-        analysisName=result.analysis_name,
-        analysisGroup=result.analysis_group,
-        year=result.year,
-        summary=result.summary,
-        source=result.source,
-        availableYears=result.available_years,
-        metrics=result.metrics,
-        highlights=result.highlights,
-        warnings=result.warnings,
-    )
-
-
-@app.get(
-    "/api/analyze",
-    response_model=AnalysisResponse,
-    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
-)
-def analyze_company(query: str, analysis_code: str) -> AnalysisResponse:
-    if settings.data_source != "supabase":
-        raise HTTPException(status_code=400, detail="이 분석 API는 Supabase 데이터 소스에서만 사용할 수 있습니다.")
-
-    try:
-        result = run_analysis(settings.supabase_database_url, query, analysis_code)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return _serialize_analysis_response(result)
+    return LiquidityMetricResponse(**payload)
 
 
 @app.get(
-    "/api/analyze-many",
-    response_model=MultiAnalysisResponse,
+    "/api/analysis/anomaly",
+    response_model=AnomalyAnalysisResponse,
     responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
-def analyze_company_many(query: str, analysis_codes: str) -> MultiAnalysisResponse:
-    if settings.data_source != "supabase":
-        raise HTTPException(status_code=400, detail="이 분석 API는 Supabase 데이터 소스에서만 사용할 수 있습니다.")
-
-    normalized_codes = [code.strip() for code in analysis_codes.split(",") if code.strip()]
-    if not normalized_codes:
-        raise HTTPException(status_code=400, detail="분석 항목을 하나 이상 선택해 주세요.")
-
-    deduped_codes = list(dict.fromkeys(normalized_codes))
-
+def anomaly_analysis(corp_code: str, group_scope: str = "A") -> AnomalyAnalysisResponse:
     try:
-        results = [run_analysis(settings.supabase_database_url, query, code) for code in deduped_codes]
+        payload = get_anomaly_analysis(settings.supabase_database_url, corp_code=corp_code, group_scope=group_scope)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return MultiAnalysisResponse(
-        query=query.strip(),
-        analysisCount=len(results),
-        items=[_serialize_analysis_response(item) for item in results],
-    )
-
-
-@app.get(
-    "/api/debt-ratio",
-    response_model=DebtRatioResponse,
-    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
-)
-def get_debt_ratio(query: str) -> DebtRatioResponse:
-    normalized_query = query.strip()
-    if not normalized_query:
-        raise HTTPException(status_code=400, detail="기업명 또는 기업번호를 입력해 주세요.")
-
-    cache_key = build_cache_key(normalized_query, "debt-ratio")
-    cached_payload = get_cached_analysis(cache_key)
-    if cached_payload is not None:
-        return DebtRatioResponse(**cached_payload, cached=True)
-
-    try:
-        if settings.data_source == "supabase":
-            result = fetch_latest_debt_ratio_data(settings.supabase_database_url, normalized_query)
-            debt_ratio = calculate_debt_ratio(result.liabilities, result.equity)
-            payload = {
-                "corpName": result.company_name,
-                "corpCode": result.company_id,
-                "year": result.year,
-                "liabilities": result.liabilities,
-                "equity": result.equity,
-                "debtRatio": debt_ratio,
-                "unit": "KRW",
-                "source": result.source,
-                "warnings": [],
-            }
-        else:
-            corporation_match = find_corporation(normalized_query)
-            extraction = extract_latest_liabilities_and_equity(corporation_match.corp)
-            debt_ratio = calculate_debt_ratio(extraction.liabilities, extraction.equity)
-            payload = {
-                "corpName": corporation_match.corp.corp_name,
-                "corpCode": corporation_match.corp.corp_code,
-                "year": extraction.year,
-                "liabilities": extraction.liabilities,
-                "equity": extraction.equity,
-                "debtRatio": debt_ratio,
-                "unit": extraction.unit,
-                "source": "DART",
-                "warnings": corporation_match.warnings,
-            }
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except CorporationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except FinancialDataError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    set_cached_analysis(cache_key, payload)
-    return DebtRatioResponse(**payload, cached=False)
-
-
-@app.post(
-    "/api/db/samsung-financial-statements/sync",
-    response_model=SamsungFinancialStatementsSyncResponse,
-    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
-)
-def sync_samsung_financials() -> SamsungFinancialStatementsSyncResponse:
-    try:
-        result = sync_samsung_financial_statements()
-    except CorporationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except FinancialDataError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    return SamsungFinancialStatementsSyncResponse(
-        corpName=result.corp_name,
-        corpCode=result.corp_code,
-        inserted=result.inserted,
-        updated=result.updated,
-        total=result.total,
-        years=result.years,
-    )
-
-
-@app.get(
-    "/api/db/samsung-financial-statements",
-    response_model=SamsungFinancialStatementsResponse,
-    responses={404: {"model": ErrorResponse}},
-)
-def list_samsung_financials() -> SamsungFinancialStatementsResponse:
-    rows = get_samsung_financial_statements()
-    if not rows:
-        raise HTTPException(status_code=404, detail="DB에 저장된 삼성전자 재무제표가 없습니다. 먼저 동기화를 실행해 주세요.")
-
-    first_row = rows[0]
-    return SamsungFinancialStatementsResponse(
-        corpName=first_row["corp_name"],
-        corpCode=first_row["corp_code"],
-        count=len(rows),
-        items=[FinancialStatementRecord(**row) for row in rows],
-    )
+    return AnomalyAnalysisResponse(**payload)

@@ -1,14 +1,29 @@
-import { useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 
 import {
-  fetchAnalyses,
-  fetchCompanyOverview,
+  fetchAnomalyAnalysis,
+  fetchCompanyProfile,
   fetchCompanySearch,
-  runAnalysis,
-  runAnalyses,
+  fetchLiquidityMetric,
+  fetchResolvedCompany,
 } from "./api";
 
-function formatCompactKrw(value) {
+const analysisTabs = [
+  { code: "liquidity_risk", label: "현금화 리스크 분석", ready: true },
+  { code: "growth", label: "성장성 분석", ready: false },
+  { code: "dev_inventory_provision", label: "개발비·재고·충당부채 리스크 분석", ready: false },
+  { code: "anomaly", label: "이상징후 분석", ready: true },
+];
+
+const liquidityMetrics = [
+  { code: "revenue_growth", name: "매출액 증가율", description: "외형 성장" },
+  { code: "operating_margin", name: "영업이익률", description: "본업 수익성" },
+  { code: "cfo_conversion", name: "영업활동현금흐름 전환율", description: "이익의 현금화 수준" },
+  { code: "contract_asset_ratio", name: "계약자산비율", description: "미청구·미회수 성격의 부담" },
+  { code: "net_contract_asset_ratio", name: "순계약자산비율", description: "수익인식과 청구 간 괴리" },
+];
+
+function formatCompactNumber(value) {
   if (value == null) {
     return "N/A";
   }
@@ -23,517 +38,560 @@ function formatCompactKrw(value) {
   return new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 }).format(value);
 }
 
-function buildTrendConfig(result) {
-  const map = {
-    DEBT_RATIO: [
-      { key: "revenue", title: "매출" },
-      { key: "netIncome", title: "당기순이익" },
-    ],
-    OPERATING_MARGIN: [
-      { key: "revenue", title: "매출" },
-      { key: "operatingIncome", title: "영업이익" },
-    ],
-    NET_MARGIN: [
-      { key: "revenue", title: "매출" },
-      { key: "netIncome", title: "당기순이익" },
-    ],
-    GROSS_MARGIN: [
-      { key: "revenue", title: "매출" },
-      { key: "grossProfit", title: "매출총이익" },
-    ],
-    INTEREST_COVERAGE: [
-      { key: "operatingIncome", title: "영업이익" },
-      { key: "netIncome", title: "당기순이익" },
-    ],
-    OCF_TO_NET_INCOME: [
-      { key: "netIncome", title: "당기순이익" },
-      { key: "revenue", title: "매출" },
-    ],
-    TREND_3Y: [
-      { key: "revenue", title: "매출" },
-      { key: "grossProfit", title: "매출총이익" },
-      { key: "operatingIncome", title: "영업이익" },
-      { key: "netIncome", title: "당기순이익" },
-    ],
-    AR_VS_REVENUE: [{ key: "revenue", title: "매출" }],
-    INVENTORY_VS_REVENUE: [{ key: "revenue", title: "매출" }],
-    NET_INCOME_VS_OCF: [
-      { key: "netIncome", title: "당기순이익" },
-      { key: "revenue", title: "매출" },
-    ],
-    ANOMALY_RULES_MVP: [
-      { key: "revenue", title: "매출" },
-      { key: "operatingIncome", title: "영업이익" },
-      { key: "netIncome", title: "당기순이익" },
-    ],
-    ALTMAN_BOOK_PROXY: [
-      { key: "revenue", title: "매출" },
-      { key: "netIncome", title: "당기순이익" },
-    ],
-  };
+function LineChart({ points, valueKey, compareKey, unitLabel }) {
+  const companyValues = points.map((point) => point[valueKey]).filter((value) => value != null);
+  const averageValues = points.map((point) => point[compareKey]).filter((value) => value != null);
+  const allValues = [...companyValues, ...averageValues];
 
-  return map[result.analysisCode] || [{ key: "revenue", title: "매출" }];
-}
-
-function TrendCard({ title, points, accessor }) {
-  const values = points.map((point) => accessor(point)).filter((value) => value != null);
-  const current = values.at(-1) ?? null;
-
-  if (!values.length) {
-    return (
-      <article className="trend-card">
-        <span>{title}</span>
-        <strong>N/A</strong>
-      </article>
-    );
+  if (!allValues.length) {
+    return <div className="chart-empty">표시할 시계열 데이터가 없습니다.</div>;
   }
 
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
+  const minValue = Math.min(...allValues);
+  const maxValue = Math.max(...allValues);
   const range = maxValue - minValue || 1;
 
-  const polyline = points
-    .map((point, index) => {
-      const value = accessor(point);
-      const x = (index / Math.max(points.length - 1, 1)) * 100;
-      const y = value == null ? 50 : 100 - ((value - minValue) / range) * 100;
-      return `${x},${y}`;
-    })
-    .join(" ");
-
-  return (
-    <article className="trend-card">
-      <span>{title}</span>
-      <strong>{formatCompactKrw(current)}</strong>
-      <svg className="trend-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <polyline
-          className="trend-line"
-          fill="none"
-          points={polyline}
-          stroke="currentColor"
-          strokeWidth="3"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
-      <div className="trend-years">
-        {points.map((point) => (
-          <em key={`${title}-${point.year}`}>{point.year}</em>
-        ))}
-      </div>
-    </article>
-  );
-}
-
-function SingleResultModal({ overview, result, onClose }) {
-  if (!result) {
-    return null;
+  function buildPath(targetKey) {
+    return points
+      .map((point, index) => {
+        const value = point[targetKey];
+        const x = (index / Math.max(points.length - 1, 1)) * 100;
+        const y = value == null ? 50 : 100 - ((value - minValue) / range) * 100;
+        return `${x},${y}`;
+      })
+      .join(" ");
   }
 
-  const trendConfigs = buildTrendConfig(result);
-
   return (
-    <div className="modal-backdrop" onClick={onClose} role="presentation">
-      <section className="result-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-        <header className="modal-head">
-          <div>
-            <p className="modal-kicker">{result.analysisName}</p>
-            <h3>{result.companyName}</h3>
-            <p className="modal-meta">{result.year}</p>
-          </div>
-          <button className="icon-button" onClick={onClose} type="button">
-            닫기
-          </button>
-        </header>
-
-        <div className="metric-grid">
-          {result.metrics.map((metric) => (
-            <article key={metric.label} className="metric-panel">
-              <span>{metric.label}</span>
-              <strong className={metric.tone === "primary" ? "metric-primary" : ""}>{metric.value}</strong>
-            </article>
-          ))}
+    <div className="chart-card">
+      <div className="chart-head">
+        <div>
+          <strong>5개년 추이</strong>
+          <span>{unitLabel}</span>
         </div>
-
-        {overview?.series?.length ? (
-          <div className="modal-trend-grid">
-            {trendConfigs.map((config) => (
-              <TrendCard
-                key={`${result.analysisCode}-${config.key}`}
-                accessor={(point) => point[config.key]}
-                points={overview.series}
-                title={config.title}
-              />
-            ))}
-          </div>
-        ) : null}
-
-        <div className="detail-grid">
-          <article className="detail-panel">
-            <h4>핵심</h4>
-            <ul>
-              {result.highlights.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </article>
-          <article className="detail-panel">
-            <h4>경고</h4>
-            {result.warnings.length ? (
-              <ul>
-                {result.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="empty-text">경고 없음</p>
-            )}
-          </article>
+        <div className="chart-legend">
+          <span className="legend-item">
+            <i className="legend-dot company" />
+            기업
+          </span>
+          <span className="legend-item">
+            <i className="legend-dot average" />
+            비교 평균
+          </span>
         </div>
-      </section>
+      </div>
+      <svg className="metric-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <polyline className="metric-line average" fill="none" points={buildPath(compareKey)} />
+        <polyline className="metric-line company" fill="none" points={buildPath(valueKey)} />
+      </svg>
+      <div className="chart-years">
+        {points.map((point) => (
+          <div key={point.year}>
+            <strong>{point.year}</strong>
+            <span>n={point.sampleSize}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-function ReportModal({ results, onClose }) {
-  if (!results.length) {
+function SearchSuggestions({ items, onSelect }) {
+  if (!items.length) {
     return null;
   }
 
-  const first = results[0];
+  return (
+    <div className="suggestion-box">
+      {items.map((item) => (
+        <button key={item.companyId} className="suggestion-item" onClick={() => onSelect(item)} type="button">
+          <div>
+            <strong>{item.companyName}</strong>
+            <span>{item.stockCode}</span>
+          </div>
+          <em>{item.companyId}</em>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MetricsSelector({ selectedMetric, onSelect }) {
+  return (
+    <div className="metric-selector">
+      {liquidityMetrics.map((metric) => (
+        <button
+          key={metric.code}
+          className={`metric-chip ${selectedMetric === metric.code ? "active" : ""}`}
+          onClick={() => onSelect(metric.code)}
+          type="button"
+        >
+          <strong>{metric.name}</strong>
+          <span>{metric.description}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DetailTable({ details }) {
+  return (
+    <div className="detail-table">
+      {details.map((detail) => (
+        <div key={detail.label} className="detail-row">
+          <strong>{detail.label}</strong>
+          <span>{detail.currentDisplay}</span>
+          <span>{detail.previousDisplay}</span>
+          <em>{detail.note || ""}</em>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LiquidityPanel({
+  metricData,
+  groupScope,
+  onGroupScopeChange,
+  selectedMetric,
+  onSelectMetric,
+  showDetails,
+  onToggleDetails,
+  isLoading,
+}) {
+  const activeMetric = useMemo(
+    () => liquidityMetrics.find((metric) => metric.code === selectedMetric),
+    [selectedMetric],
+  );
+
+  return (
+    <div className="analysis-panel">
+      <div className="panel-toolbar">
+        <div>
+          <p className="eyebrow">지표 선택</p>
+          <h4>현금화 리스크 지표</h4>
+        </div>
+        <label className="scope-select">
+          <span>비교 평균</span>
+          <select value={groupScope} onChange={(event) => onGroupScopeChange(event.target.value)}>
+            <option value="A">A 그룹</option>
+            <option value="AB">A+B 그룹</option>
+            <option value="ABC">A+B+C 그룹</option>
+          </select>
+        </label>
+      </div>
+
+      <MetricsSelector selectedMetric={selectedMetric} onSelect={onSelectMetric} />
+
+      {isLoading ? <div className="loading-panel">분석 데이터를 계산하는 중입니다.</div> : null}
+
+      {!isLoading && metricData ? (
+        <>
+          <div className="metric-hero">
+            <div className="metric-hero-card emphasis">
+              <span>{activeMetric?.name}</span>
+              <strong>{metricData.currentDisplay}</strong>
+              <em>{metricData.sourceLabel}</em>
+            </div>
+            <div className="metric-hero-card">
+              <span>{groupScope} 평균</span>
+              <strong>{metricData.averageDisplay}</strong>
+              <em>표본 {metricData.averageSampleSize}개</em>
+            </div>
+            <div className="metric-hero-card">
+              <span>지표 의미</span>
+              <strong>{activeMetric?.description}</strong>
+              <em>당기 기준: 2025년</em>
+            </div>
+          </div>
+
+          {metricData.currentReason ? <div className="status-banner warning">{metricData.currentReason}</div> : null}
+
+          <div className="panel-inline-actions">
+            <button className="ghost-button" onClick={onToggleDetails} type="button">
+              {showDetails ? "상세정보 닫기" : "상세정보"}
+            </button>
+          </div>
+
+          <LineChart
+            compareKey="averageValue"
+            points={metricData.series}
+            unitLabel={selectedMetric === "cfo_conversion" ? "배수" : "퍼센트"}
+            valueKey="companyValue"
+          />
+
+          {showDetails ? <DetailTable details={metricData.details} /> : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function AnomalyPanel({ anomalyData, isLoading }) {
+  if (isLoading) {
+    return <div className="loading-panel">이상징후를 판별하는 중입니다.</div>;
+  }
+
+  if (!anomalyData) {
+    return null;
+  }
+
+  return (
+    <div className="analysis-panel">
+      <div className="metric-hero">
+        <div className={`metric-hero-card emphasis severity-${anomalyData.overallRiskLevel}`}>
+          <span>종합 등급</span>
+          <strong>{anomalyData.overallRiskLevel}</strong>
+          <em>{anomalyData.sourceLabel}</em>
+        </div>
+        <div className="metric-hero-card">
+          <span>핵심 해석</span>
+          <strong>{anomalyData.overallSummary}</strong>
+          <em>{anomalyData.note || "추가 제한사항 없음"}</em>
+        </div>
+      </div>
+
+      <div className="indicator-grid">
+        {anomalyData.indicators.map((indicator) => (
+          <article key={indicator.label} className="indicator-card">
+            <span>{indicator.label}</span>
+            <strong>{indicator.display}</strong>
+            <em>{indicator.description}</em>
+          </article>
+        ))}
+      </div>
+
+      <div className="signal-stack">
+        {anomalyData.signals.map((signal) => (
+          <article key={signal.code} className={`signal-card ${signal.triggered ? "triggered" : ""}`}>
+            <div className="signal-head">
+              <strong>{signal.title}</strong>
+              <span>{signal.severity}</span>
+            </div>
+            <p>{signal.summary}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AnalysisModal({
+  profile,
+  activeTab,
+  onTabChange,
+  onClose,
+  selectedMetric,
+  onSelectMetric,
+  groupScope,
+  onGroupScopeChange,
+  metricData,
+  anomalyData,
+  isMetricLoading,
+  isAnomalyLoading,
+  showDetails,
+  onToggleDetails,
+}) {
+  if (!profile) {
+    return null;
+  }
+
+  const primaryGroup = profile.groups[0];
 
   return (
     <div className="modal-backdrop" onClick={onClose} role="presentation">
-      <section className="report-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-        <header className="modal-head">
+      <section className="analysis-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+        <header className="modal-header">
           <div>
-            <p className="modal-kicker">리포트 센터</p>
-            <h3>{first.companyName}</h3>
-            <p className="modal-meta">{results.length}개 분석</p>
+            <p className="eyebrow">방산기업 현금화 리스크 분석</p>
+            <h2>{profile.company.corp_name}</h2>
+            <p className="modal-subtitle">
+              {profile.company.stock_code} · {profile.company.corp_code}
+              {primaryGroup ? ` · ${primaryGroup.industry_id.toUpperCase()}-${primaryGroup.level}` : ""}
+            </p>
           </div>
-          <button className="icon-button" onClick={onClose} type="button">
+          <button className="close-button" onClick={onClose} type="button">
             닫기
           </button>
         </header>
 
-        <div className="report-stack">
-          {results.map((result) => (
-            <section key={result.analysisCode} className="report-block">
-              <div className="report-block-head">
-                <h4>{result.analysisName}</h4>
-                <p>{result.summary}</p>
-              </div>
-              <div className="metric-grid compact">
-                {result.metrics.map((metric) => (
-                  <article key={`${result.analysisCode}-${metric.label}`} className="metric-panel">
-                    <span>{metric.label}</span>
-                    <strong className={metric.tone === "primary" ? "metric-primary" : ""}>{metric.value}</strong>
-                  </article>
-                ))}
-              </div>
-            </section>
+        <div className="tab-row">
+          {analysisTabs.map((tab) => (
+            <button
+              key={tab.code}
+              className={`tab-button ${activeTab === tab.code ? "active" : ""}`}
+              onClick={() => onTabChange(tab.code)}
+              type="button"
+            >
+              {tab.label}
+            </button>
           ))}
         </div>
+
+        {activeTab === "liquidity_risk" ? (
+          <LiquidityPanel
+            groupScope={groupScope}
+            isLoading={isMetricLoading}
+            metricData={metricData}
+            onGroupScopeChange={onGroupScopeChange}
+            onSelectMetric={onSelectMetric}
+            onToggleDetails={onToggleDetails}
+            selectedMetric={selectedMetric}
+            showDetails={showDetails}
+          />
+        ) : null}
+
+        {activeTab === "anomaly" ? <AnomalyPanel anomalyData={anomalyData} isLoading={isAnomalyLoading} /> : null}
+
+        {activeTab === "growth" || activeTab === "dev_inventory_provision" ? (
+          <div className="coming-soon-panel">
+            <strong>준비 중</strong>
+            <span>해당 분석은 현재 구조 개편 후 순차적으로 연결할 예정입니다.</span>
+          </div>
+        ) : null}
       </section>
     </div>
   );
 }
 
 function App() {
-  const [mode, setMode] = useState("company");
   const [query, setQuery] = useState("");
-  const [analyses, setAnalyses] = useState([]);
+  const deferredQuery = useDeferredValue(query);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [selectedCompany, setSelectedCompany] = useState(null);
-  const [overview, setOverview] = useState(null);
-  const [singleResult, setSingleResult] = useState(null);
-  const [reportResults, setReportResults] = useState([]);
-  const [selectedReportCodes, setSelectedReportCodes] = useState([]);
   const [error, setError] = useState("");
-  const [isLoadingAnalyses, setIsLoadingAnalyses] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
-  const [isOverviewLoading, setIsOverviewLoading] = useState(false);
-  const [isReportLoading, setIsReportLoading] = useState(false);
+  const [isResolving, setIsResolving] = useState(false);
+  const [profile, setProfile] = useState(null);
+  const [activeTab, setActiveTab] = useState("liquidity_risk");
+  const [selectedMetric, setSelectedMetric] = useState("revenue_growth");
+  const [groupScope, setGroupScope] = useState("A");
+  const [metricData, setMetricData] = useState(null);
+  const [anomalyData, setAnomalyData] = useState(null);
+  const [isMetricLoading, setIsMetricLoading] = useState(false);
+  const [isAnomalyLoading, setIsAnomalyLoading] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
-    let isMounted = true;
-
-    async function loadAnalyses() {
-      try {
-        const data = await fetchAnalyses();
-        if (!isMounted) {
-          return;
-        }
-        setAnalyses(data);
-        setSelectedReportCodes(data.map((item) => item.analysisCode));
-      } catch (caught) {
-        if (!isMounted) {
-          return;
-        }
-        setError(caught instanceof Error ? caught.message : "분석 목록을 불러오지 못했습니다.");
-      } finally {
-        if (isMounted) {
-          setIsLoadingAnalyses(false);
-        }
-      }
-    }
-
-    loadAnalyses();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!query.trim() || !showSuggestions) {
+    if (!deferredQuery.trim() || !showSuggestions) {
       setSuggestions([]);
       return;
     }
 
-    let active = true;
+    let cancelled = false;
     const timer = setTimeout(async () => {
       setIsSearching(true);
       try {
-        const items = await fetchCompanySearch(query);
-        if (active) {
+        const items = await fetchCompanySearch(deferredQuery);
+        if (!cancelled) {
           setSuggestions(items);
         }
       } catch {
-        if (active) {
+        if (!cancelled) {
           setSuggestions([]);
         }
       } finally {
-        if (active) {
+        if (!cancelled) {
           setIsSearching(false);
         }
       }
-    }, 150);
+    }, 160);
 
     return () => {
-      active = false;
+      cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, showSuggestions]);
+  }, [deferredQuery, showSuggestions]);
 
-  async function loadOverview(company) {
-    setSelectedCompany(company);
-    setQuery(company.companyName);
-    setSuggestions([]);
-    setShowSuggestions(false);
-    setIsOverviewLoading(true);
+  useEffect(() => {
+    if (!profile || activeTab !== "liquidity_risk") {
+      return;
+    }
+
+    let cancelled = false;
+    setIsMetricLoading(true);
+    setShowDetails(false);
+
+    fetchLiquidityMetric(profile.company.corp_code, selectedMetric, groupScope)
+      .then((data) => {
+        if (!cancelled) {
+          setMetricData(data);
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setMetricData(null);
+          setError(caught instanceof Error ? caught.message : "현금화 리스크 분석을 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsMetricLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, groupScope, profile, selectedMetric]);
+
+  useEffect(() => {
+    if (!profile || activeTab !== "anomaly") {
+      return;
+    }
+
+    let cancelled = false;
+    setIsAnomalyLoading(true);
+
+    fetchAnomalyAnalysis(profile.company.corp_code, groupScope)
+      .then((data) => {
+        if (!cancelled) {
+          setAnomalyData(data);
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setAnomalyData(null);
+          setError(caught instanceof Error ? caught.message : "이상징후 분석을 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsAnomalyLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, groupScope, profile]);
+
+  async function openCompanyProfileFromSuggestion(item) {
     setError("");
-
+    setIsResolving(true);
     try {
-      const data = await fetchCompanyOverview(company.companyId);
-      setOverview(data);
+      const data = await fetchCompanyProfile(item.companyId);
+      setProfile(data);
+      setActiveTab("liquidity_risk");
+      setGroupScope("A");
+      setSelectedMetric("revenue_growth");
+      setQuery(item.companyName);
+      setSuggestions([]);
+      setShowSuggestions(false);
     } catch (caught) {
-      setOverview(null);
-      setError(caught instanceof Error ? caught.message : "개요 조회에 실패했습니다.");
+      setProfile(null);
+      setError(caught instanceof Error ? caught.message : "기업 정보를 불러오지 못했습니다.");
     } finally {
-      setIsOverviewLoading(false);
+      setIsResolving(false);
     }
   }
 
-  async function handleSingleAnalysis(analysisCode) {
-    if (!selectedCompany) {
-      setError("기업을 먼저 선택해 주세요.");
-      return;
-    }
-    setError("");
-    try {
-      const data = await runAnalysis(selectedCompany.companyId, analysisCode);
-      setSingleResult(data);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "분석을 완료하지 못했습니다.");
-    }
-  }
-
-  async function handleReportRun() {
-    if (!selectedCompany) {
-      setError("기업을 먼저 선택해 주세요.");
-      return;
-    }
-    if (!selectedReportCodes.length) {
-      setError("리포트에 포함할 분석을 선택해 주세요.");
+  async function handleSubmit(event) {
+    event.preventDefault();
+    const normalized = query.trim();
+    if (!normalized) {
       return;
     }
 
-    setIsReportLoading(true);
     setError("");
+    setIsResolving(true);
     try {
-      const data = await runAnalyses(selectedCompany.companyId, selectedReportCodes);
-      setReportResults(data.items);
+      const data = await fetchResolvedCompany(normalized);
+      setProfile(data);
+      setActiveTab("liquidity_risk");
+      setGroupScope("A");
+      setSelectedMetric("revenue_growth");
+      setSuggestions([]);
+      setShowSuggestions(false);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "리포트 생성에 실패했습니다.");
+      setProfile(null);
+      setError(caught instanceof Error ? caught.message : "해당 기업정보가 존재하지 않습니다.");
     } finally {
-      setIsReportLoading(false);
+      setIsResolving(false);
     }
   }
 
-  function toggleReportCode(code) {
-    setSelectedReportCodes((current) =>
-      current.includes(code) ? current.filter((item) => item !== code) : [...current, code],
-    );
+  function closeModal() {
+    setProfile(null);
+    setMetricData(null);
+    setAnomalyData(null);
+    setShowDetails(false);
   }
 
   return (
     <div className="app-shell">
-      <aside className="app-sidebar">
-        <button className={`nav-link ${mode === "company" ? "active" : ""}`} onClick={() => setMode("company")} type="button">
-          기업 분석
-        </button>
-        <button className={`nav-link ${mode === "report" ? "active" : ""}`} onClick={() => setMode("report")} type="button">
-          리포트 센터
-        </button>
-      </aside>
+      <main className="landing">
+        <section className="hero-panel">
+          <p className="hero-kicker">Defense Cash Conversion Risk Console</p>
+          <h1>기업명, 종목코드, 기업코드로 바로 찾고 2025년 현금화 리스크를 읽는다.</h1>
+          <p className="hero-copy">
+            검색 후 모달에서 현금화 리스크, 이상징후, 비교 그룹 평균과 5개년 추이를 한 번에 확인할 수 있다.
+          </p>
 
-      <main className="app-main">
-        <header className="topbar">
-          <h1>재무제표 분석</h1>
-          {selectedCompany ? (
-            <div className="company-badge">
-              <strong>{selectedCompany.companyName}</strong>
-              <span>{selectedCompany.stockCode || selectedCompany.companyId}</span>
-            </div>
-          ) : null}
-        </header>
-
-        <section className="search-strip">
-          <div className="search-field">
-            <input
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setShowSuggestions(true);
-              }}
-              onFocus={() => {
-                if (query.trim()) {
+          <form className="search-shell" onSubmit={handleSubmit}>
+            <div className="search-field">
+              <input
+                placeholder="예: 한화에어로스페이스 / 012450 / 00126566"
+                type="text"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
                   setShowSuggestions(true);
-                }
-              }}
-              placeholder="기업명 또는 종목코드"
-              type="text"
-            />
-            {showSuggestions && suggestions.length ? (
-              <div className="suggestion-box">
-                {suggestions.map((item) => (
-                  <button key={item.companyId} className="suggestion-item" onClick={() => loadOverview(item)} type="button">
-                    <div>
-                      <strong>{item.companyName}</strong>
-                      <span>{item.stockCode || item.companyId}</span>
-                    </div>
-                    <em>{formatCompactKrw(item.marketCapKrw)}</em>
-                  </button>
-                ))}
-              </div>
-            ) : null}
+                }}
+                onFocus={() => {
+                  if (query.trim()) {
+                    setShowSuggestions(true);
+                  }
+                }}
+              />
+              <SearchSuggestions items={suggestions} onSelect={openCompanyProfileFromSuggestion} />
+            </div>
+            <button className="search-button" disabled={isResolving} type="submit">
+              {isResolving ? "검색 중" : "검색"}
+            </button>
+          </form>
+
+          <div className="hero-hints">
+            <span>자동완성 클릭 시 바로 분석 모달 오픈</span>
+            <span>정확히 일치하는 기업명·종목코드·기업코드는 엔터만으로 검색</span>
+            <span>{isSearching ? "후보 기업 검색 중" : "기준 데이터: companies_basic"}</span>
           </div>
-          <button
-            className="primary-button"
-            disabled={!selectedCompany || isOverviewLoading}
-            onClick={() => loadOverview(selectedCompany)}
-            type="button"
-          >
-            {isSearching ? "검색 중" : isOverviewLoading ? "조회 중" : "조회"}
-          </button>
         </section>
 
-        {error ? <div className="status-bar error">{error}</div> : null}
+        <section className="info-strip">
+          <article>
+            <span>당기 기준</span>
+            <strong>2025년 고정</strong>
+          </article>
+          <article>
+            <span>재무제표 우선순위</span>
+            <strong>CFS 우선, 없으면 OFS</strong>
+          </article>
+          <article>
+            <span>비교 범위</span>
+            <strong>A / AB / ABC 그룹</strong>
+          </article>
+        </section>
 
-        {mode === "company" ? (
-          <section className="workspace">
-            {overview ? (
-              <>
-                <div className="summary-strip">
-                  <div>
-                    <span>시가총액</span>
-                    <strong>{formatCompactKrw(overview.marketCapKrw)}</strong>
-                  </div>
-                  <div>
-                    <span>현재가</span>
-                    <strong>{formatCompactKrw(overview.currentPriceKrw)}</strong>
-                  </div>
-                  <div>
-                    <span>시장</span>
-                    <strong>{overview.market || "N/A"}</strong>
-                  </div>
-                </div>
-
-                <div className="trend-grid">
-                  <TrendCard accessor={(point) => point.revenue} points={overview.series} title="매출" />
-                  <TrendCard accessor={(point) => point.grossProfit} points={overview.series} title="매출총이익" />
-                  <TrendCard accessor={(point) => point.operatingIncome} points={overview.series} title="영업이익" />
-                  <TrendCard accessor={(point) => point.netIncome} points={overview.series} title="당기순이익" />
-                </div>
-
-                <div className="action-section">
-                  <div className="section-title-row">
-                    <h2>개별 분석</h2>
-                  </div>
-                  <div className="action-grid">
-                    {analyses.map((analysis) => (
-                      <button
-                        key={analysis.analysisCode}
-                        className="action-card"
-                        onClick={() => handleSingleAnalysis(analysis.analysisCode)}
-                        type="button"
-                      >
-                        <strong>{analysis.analysisName}</strong>
-                        <span>{analysis.notes}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="empty-stage">기업을 선택하면 3개년 흐름이 표시됩니다.</div>
-            )}
-          </section>
-        ) : (
-          <section className="workspace report-layout">
-            <div className="report-sidebar">
-              <div className="section-title-row">
-                <h2>리포트 센터</h2>
-              </div>
-              <div className="report-list">
-                {analyses.map((analysis) => (
-                  <label key={analysis.analysisCode} className="report-item">
-                    <input
-                      checked={selectedReportCodes.includes(analysis.analysisCode)}
-                      onChange={() => toggleReportCode(analysis.analysisCode)}
-                      type="checkbox"
-                    />
-                    <div>
-                      <strong>{analysis.analysisName}</strong>
-                      <span>{analysis.notes}</span>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="report-main">
-              <div className="report-meta">
-                <div>
-                  <span>대상 기업</span>
-                  <strong>{selectedCompany ? selectedCompany.companyName : "미선택"}</strong>
-                </div>
-                <div>
-                  <span>선택 분석</span>
-                  <strong>{selectedReportCodes.length}</strong>
-                </div>
-              </div>
-              <button className="primary-button wide" disabled={isLoadingAnalyses || isReportLoading} onClick={handleReportRun} type="button">
-                {isReportLoading ? "리포트 생성 중" : "리포트 생성"}
-              </button>
-            </div>
-          </section>
-        )}
+        {error ? <div className="status-banner error">{error}</div> : null}
       </main>
 
-      <SingleResultModal overview={overview} onClose={() => setSingleResult(null)} result={singleResult} />
-      <ReportModal onClose={() => setReportResults([])} results={reportResults} />
+      <AnalysisModal
+        activeTab={activeTab}
+        anomalyData={anomalyData}
+        groupScope={groupScope}
+        isAnomalyLoading={isAnomalyLoading}
+        isMetricLoading={isMetricLoading}
+        metricData={metricData}
+        onClose={closeModal}
+        onGroupScopeChange={setGroupScope}
+        onSelectMetric={setSelectedMetric}
+        onTabChange={setActiveTab}
+        onToggleDetails={() => setShowDetails((current) => !current)}
+        profile={profile}
+        selectedMetric={selectedMetric}
+        showDetails={showDetails}
+      />
     </div>
   );
 }

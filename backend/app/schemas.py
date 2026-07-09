@@ -142,3 +142,91 @@ class MultiAnalysisResponse(BaseModel):
     query: str
     analysis_count: int = Field(alias="analysisCount")
     items: list[AnalysisResponse]
+
+
+class CompanyProfileResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    company: dict
+    groups: list[dict]
+    analyses: list[dict]
+
+
+class LiquiditySeriesPoint(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    year: int
+    company_value: float | None = Field(default=None, alias="companyValue")
+    company_display: str = Field(alias="companyDisplay")
+    average_value: float | None = Field(default=None, alias="averageValue")
+    average_display: str = Field(alias="averageDisplay")
+    sample_size: int = Field(alias="sampleSize")
+    source_basis: str | None = Field(default=None, alias="sourceBasis")
+    source_label: str = Field(alias="sourceLabel")
+    reason: str | None = None
+
+
+class MetricDetailRow(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    label: str
+    current_value: float | str | None = Field(default=None, alias="currentValue")
+    current_display: str = Field(alias="currentDisplay")
+    previous_value: float | str | None = Field(default=None, alias="previousValue")
+    previous_display: str = Field(alias="previousDisplay")
+    note: str | None = None
+
+
+class LiquidityMetricResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    company: dict
+    metric_code: str = Field(alias="metricCode")
+    metric_name: str = Field(alias="metricName")
+    metric_description: str = Field(alias="metricDescription")
+    year: int
+    group_scope: str = Field(alias="groupScope")
+    source_basis: str | None = Field(default=None, alias="sourceBasis")
+    source_label: str = Field(alias="sourceLabel")
+    current_value: float | None = Field(default=None, alias="currentValue")
+    current_display: str = Field(alias="currentDisplay")
+    current_reason: str | None = Field(default=None, alias="currentReason")
+    average_value: float | None = Field(default=None, alias="averageValue")
+    average_display: str = Field(alias="averageDisplay")
+    average_sample_size: int = Field(alias="averageSampleSize")
+    series: list[LiquiditySeriesPoint]
+    details: list[MetricDetailRow]
+    formula: str
+
+
+class AnomalyIndicator(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    label: str
+    value: float | None = None
+    display: str
+    description: str
+
+
+class AnomalySignal(BaseModel):
+    code: str
+    title: str
+    triggered: bool
+    severity: str
+    summary: str
+
+
+class AnomalyAnalysisResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    company: dict
+    year: int
+    group_scope: str = Field(alias="groupScope")
+    source_basis: str | None = Field(default=None, alias="sourceBasis")
+    source_label: str = Field(alias="sourceLabel")
+    overall_risk_level: str = Field(alias="overallRiskLevel")
+    overall_summary: str = Field(alias="overallSummary")
+    note: str | None = None
+    indicators: list[AnomalyIndicator]
+    signals: list[AnomalySignal]
+    contract_asset_risk: dict = Field(alias="contractAssetRisk")
