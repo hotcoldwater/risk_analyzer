@@ -15,6 +15,16 @@ const analysisTabs = [
   { code: "anomaly", label: "이상징후 분석", ready: true },
 ];
 
+function uniqueIndustries(groups) {
+  const seen = new Map();
+  groups.forEach((group) => {
+    if (!seen.has(group.industry_id)) {
+      seen.set(group.industry_id, group);
+    }
+  });
+  return [...seen.values()];
+}
+
 const liquidityMetrics = [
   { code: "revenue_growth", name: "매출액 증가율", description: "외형 성장" },
   { code: "operating_margin", name: "영업이익률", description: "본업 수익성" },
@@ -74,8 +84,9 @@ function buildSegments(points, targetKey, minValue, range) {
   return segments;
 }
 
-function LineChart({ points, valueKey, compareKey, unitLabel, metricCode }) {
-  const [hoveredYear, setHoveredYear] = useState(null);
+function LineChart({ points, valueKey, compareKey, unitLabel, metricCode, companyName }) {
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const companyValues = points.map((point) => point[valueKey]).filter((value) => value != null);
   const averageValues = points.map((point) => point[compareKey]).filter((value) => value != null);
   const allValues = [...companyValues, ...averageValues];
@@ -89,7 +100,27 @@ function LineChart({ points, valueKey, compareKey, unitLabel, metricCode }) {
   const range = maxValue - minValue || 1;
   const companySegments = buildSegments(points, valueKey, minValue, range);
   const averageSegments = buildSegments(points, compareKey, minValue, range);
-  const hoveredPoint = hoveredYear == null ? null : points.find((point) => point.year === hoveredYear);
+  const hoveredPoint = hoveredIndex == null ? null : points[hoveredIndex];
+
+  function yForValue(value) {
+    if (value == null) {
+      return null;
+    }
+    return 100 - ((value - minValue) / range) * 100;
+  }
+
+  function handlePointerMove(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const relativeX = event.clientX - rect.left;
+    const width = rect.width || 1;
+    const ratio = Math.min(Math.max(relativeX / width, 0), 1);
+    const index = Math.round(ratio * Math.max(points.length - 1, 1));
+    setHoveredIndex(index);
+    setTooltipPosition({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    });
+  }
 
   return (
     <div className="chart-card">
@@ -109,37 +140,50 @@ function LineChart({ points, valueKey, compareKey, unitLabel, metricCode }) {
           </span>
         </div>
       </div>
-      <svg className="metric-chart" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        {averageSegments.map((segment, index) => (
-          <polyline key={`avg-${index}`} className="metric-line average" fill="none" points={segment.join(" ")} />
-        ))}
-        {companySegments.map((segment, index) => (
-          <polyline key={`company-${index}`} className="metric-line company" fill="none" points={segment.join(" ")} />
-        ))}
-        {points.map((point, index) => {
-          const x = (index / Math.max(points.length - 1, 1)) * 100;
-          return (
-            <rect
-              key={point.year}
-              x={Math.max(0, x - 8)}
-              y="0"
-              width="16"
-              height="100"
-              className="chart-hitbox"
-              onMouseEnter={() => setHoveredYear(point.year)}
-              onMouseLeave={() => setHoveredYear(null)}
-            />
-          );
-        })}
-      </svg>
-      {hoveredPoint ? (
-        <div className="chart-tooltip">
-          <strong>{hoveredPoint.year}</strong>
-          <span>기업: {formatTooltipValue(hoveredPoint.companyValue, metricCode)}</span>
-          <span>비교 평균: {formatTooltipValue(hoveredPoint.averageValue, metricCode)}</span>
-          <em>표본 {hoveredPoint.sampleSize}개</em>
-        </div>
-      ) : null}
+      <div className="chart-stage">
+        <svg
+          className="metric-chart"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          onMouseMove={handlePointerMove}
+          onMouseLeave={() => setHoveredIndex(null)}
+        >
+          {averageSegments.map((segment, index) => (
+            <polyline key={`avg-${index}`} className="metric-line average" fill="none" points={segment.join(" ")} />
+          ))}
+          {companySegments.map((segment, index) => (
+            <polyline key={`company-${index}`} className="metric-line company" fill="none" points={segment.join(" ")} />
+          ))}
+          {points.map((point, index) => {
+            const x = (index / Math.max(points.length - 1, 1)) * 100;
+            const companyY = yForValue(point.companyValue);
+            const averageY = yForValue(point.averageValue);
+            return (
+              <g key={point.year}>
+                {companyY != null ? <circle className="chart-dot company" cx={x} cy={companyY} r="1.4" /> : null}
+                {averageY != null ? <circle className="chart-dot average" cx={x} cy={averageY} r="1.4" /> : null}
+              </g>
+            );
+          })}
+        </svg>
+        {hoveredPoint ? (
+          <div
+            className="chart-tooltip floating"
+            style={{
+              left: `${Math.min(Math.max(tooltipPosition.x + 14, 12), 720)}px`,
+              top: `${Math.max(tooltipPosition.y - 18, 12)}px`,
+            }}
+          >
+            <strong>{hoveredPoint.year}</strong>
+            <span>
+              {companyName}: {formatTooltipValue(hoveredPoint.companyValue, metricCode)}
+            </span>
+            <span>산업평균: {formatTooltipValue(hoveredPoint.averageValue, metricCode)}</span>
+            <em>표본 {hoveredPoint.sampleSize}개</em>
+          </div>
+        ) : null}
+      </div>
       <div className="chart-years">
         {points.map((point) => (
           <div key={point.year}>
@@ -168,6 +212,46 @@ function SearchSuggestions({ items, onSelect }) {
           <em>{item.companyId}</em>
         </button>
       ))}
+    </div>
+  );
+}
+
+function IndustryPickerModal({ profile, onSelect, onClose }) {
+  if (!profile) {
+    return null;
+  }
+
+  const industries = uniqueIndustries(profile.groups);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose} role="presentation">
+      <section className="industry-picker-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
+        <header className="picker-header">
+          <div>
+            <p className="eyebrow">분석 산업 선택</p>
+            <h3>{profile.company.corp_name}</h3>
+          </div>
+          <button className="close-button" onClick={onClose} type="button">
+            닫기
+          </button>
+        </header>
+        <div className="industry-option-list">
+          {industries.map((industry) => (
+            <button
+              key={industry.industry_id}
+              className="industry-option"
+              onClick={() => onSelect(industry.industry_id)}
+              type="button"
+            >
+              <strong>{industry.industry_id.toUpperCase()}</strong>
+              <span>
+                {industry.level} 그룹
+                {industry.level_category ? ` · ${industry.level_category}` : ""}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
@@ -302,6 +386,7 @@ function LiquidityPanel({
 
           <LineChart
             compareKey="averageValue"
+            companyName={metricData.company.corp_name}
             metricCode={selectedMetric}
             points={metricData.series}
             unitLabel={selectedMetric === "cfo_conversion" ? "배수" : "퍼센트"}
@@ -373,6 +458,7 @@ function AnomalyPanel({ anomalyData, isLoading }) {
 
 function AnalysisModal({
   profile,
+  selectedIndustryId,
   activeTab,
   onTabChange,
   onClose,
@@ -391,7 +477,7 @@ function AnalysisModal({
     return null;
   }
 
-  const primaryGroup = profile.groups[0];
+  const primaryGroup = profile.groups.find((group) => group.industry_id === selectedIndustryId) || profile.groups[0];
 
   return (
     <div className="modal-backdrop" onClick={onClose} role="presentation">
@@ -423,6 +509,12 @@ function AnalysisModal({
           ))}
         </div>
 
+        {!activeTab ? (
+          <div className="empty-analysis-panel">
+            <strong>분석을 시작해보세요</strong>
+          </div>
+        ) : null}
+
         {activeTab === "liquidity_risk" ? (
           <LiquidityPanel
             groupScope={groupScope}
@@ -450,6 +542,7 @@ function AnalysisModal({
 }
 
 function App() {
+  const [viewMode, setViewMode] = useState("stock");
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [suggestions, setSuggestions] = useState([]);
@@ -458,7 +551,9 @@ function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
   const [profile, setProfile] = useState(null);
-  const [activeTab, setActiveTab] = useState("liquidity_risk");
+  const [pendingProfile, setPendingProfile] = useState(null);
+  const [selectedIndustryId, setSelectedIndustryId] = useState(null);
+  const [activeTab, setActiveTab] = useState(null);
   const [selectedMetric, setSelectedMetric] = useState("revenue_growth");
   const [groupScope, setGroupScope] = useState("A");
   const [metricData, setMetricData] = useState(null);
@@ -566,8 +661,14 @@ function App() {
     setIsResolving(true);
     try {
       const data = await fetchCompanyProfile(item.companyId);
-      setProfile(data);
-      setActiveTab("liquidity_risk");
+      const industries = uniqueIndustries(data.groups);
+      if (industries.length > 1) {
+        setPendingProfile(data);
+      } else {
+        setProfile(data);
+        setSelectedIndustryId(industries[0]?.industry_id || null);
+      }
+      setActiveTab(null);
       setGroupScope("A");
       setSelectedMetric("revenue_growth");
       setQuery(item.companyName);
@@ -592,8 +693,14 @@ function App() {
     setIsResolving(true);
     try {
       const data = await fetchResolvedCompany(normalized);
-      setProfile(data);
-      setActiveTab("liquidity_risk");
+      const industries = uniqueIndustries(data.groups);
+      if (industries.length > 1) {
+        setPendingProfile(data);
+      } else {
+        setProfile(data);
+        setSelectedIndustryId(industries[0]?.industry_id || null);
+      }
+      setActiveTab(null);
       setGroupScope("A");
       setSelectedMetric("revenue_growth");
       setSuggestions([]);
@@ -608,19 +715,51 @@ function App() {
 
   function closeModal() {
     setProfile(null);
+    setPendingProfile(null);
+    setSelectedIndustryId(null);
+    setActiveTab(null);
     setMetricData(null);
     setAnomalyData(null);
     setShowDetails(false);
   }
 
+  function handleIndustrySelect(industryId) {
+    if (!pendingProfile) {
+      return;
+    }
+    setProfile(pendingProfile);
+    setSelectedIndustryId(industryId);
+    setPendingProfile(null);
+    setActiveTab(null);
+    setMetricData(null);
+    setAnomalyData(null);
+  }
+
   return (
     <div className="app-shell">
-      <main className="landing minimal">
-        <section className="search-stage">
-          <form className="search-shell" onSubmit={handleSubmit}>
+      <aside className="side-nav">
+        <button
+          className={`side-link ${viewMode === "stock" ? "active" : ""}`}
+          onClick={() => setViewMode("stock")}
+          type="button"
+        >
+          종목 분석
+        </button>
+        <button
+          className={`side-link ${viewMode === "industry" ? "active" : ""}`}
+          onClick={() => setViewMode("industry")}
+          type="button"
+        >
+          산업 분석
+        </button>
+      </aside>
+
+      <div className="workspace-shell">
+        <header className="top-search-bar">
+          <form className="search-shell compact" onSubmit={handleSubmit}>
             <div className="search-field">
               <input
-                placeholder="예: 한화에어로스페이스 / 012450 / 00126566"
+                placeholder="기업명 / 종목코드 / 기업코드"
                 type="text"
                 value={query}
                 onChange={(event) => {
@@ -635,15 +774,31 @@ function App() {
               />
               <SearchSuggestions items={suggestions} onSelect={openCompanyProfileFromSuggestion} />
             </div>
-            <button className="search-button" disabled={isResolving} type="submit">
+            <button className="search-button" disabled={isResolving || viewMode === "industry"} type="submit">
               {isResolving ? "검색 중" : "검색"}
             </button>
           </form>
-        </section>
+        </header>
 
-        {error ? <div className="status-banner error">{error}</div> : null}
-        {isSearching ? <div className="search-status">검색 중</div> : null}
-      </main>
+        <main className="content-stage">
+          {viewMode === "stock" ? (
+            <>
+              {error ? <div className="status-banner error">{error}</div> : null}
+              {isSearching ? <div className="search-status">검색 중</div> : null}
+            </>
+          ) : (
+            <div className="empty-mode-panel">
+              <strong>산업 분석은 준비 중입니다</strong>
+            </div>
+          )}
+        </main>
+      </div>
+
+      <IndustryPickerModal
+        onClose={() => setPendingProfile(null)}
+        onSelect={handleIndustrySelect}
+        profile={pendingProfile}
+      />
 
       <AnalysisModal
         activeTab={activeTab}
@@ -658,6 +813,7 @@ function App() {
         onTabChange={setActiveTab}
         onToggleDetails={() => setShowDetails((current) => !current)}
         profile={profile}
+        selectedIndustryId={selectedIndustryId}
         selectedMetric={selectedMetric}
         showDetails={showDetails}
       />

@@ -71,12 +71,20 @@ em {
 
 .app-shell {
   min-height: 100vh;
+  display: grid;
+  grid-template-columns: 220px 1fr;
 }
 
-.landing {
-  width: min(1180px, calc(100% - 40px));
-  margin: 0 auto;
-  padding: 48px 0 72px;
+.side-nav {
+  position: sticky;
+  top: 0;
+  min-height: 100vh;
+  padding: 24px 18px;
+  border-right: 1px solid var(--line);
+  background: #f8fafc;
+  display: grid;
+  align-content: start;
+  gap: 10px;
 }
 
 .eyebrow,
@@ -95,15 +103,40 @@ em {
   text-transform: uppercase;
 }
 
-.landing.minimal {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 0;
+.side-link {
+  min-height: 52px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #ffffff;
+  color: var(--muted);
+  text-align: left;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.search-stage {
-  width: min(980px, 100%);
+.side-link.active {
+  background: #111827;
+  color: #ffffff;
+  border-color: #111827;
+}
+
+.workspace-shell {
+  min-height: 100vh;
+}
+
+.top-search-bar {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(10px);
+}
+
+.content-stage {
+  padding: 28px 24px 48px;
 }
 
 .search-shell {
@@ -111,7 +144,10 @@ em {
   display: grid;
   grid-template-columns: 1fr 150px;
   gap: 12px;
-  margin-top: 30px;
+}
+
+.search-shell.compact {
+  max-width: 980px;
 }
 
 .search-field {
@@ -217,6 +253,23 @@ em {
   font-size: 0.92rem;
 }
 
+.empty-mode-panel,
+.empty-analysis-panel {
+  min-height: 300px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: 24px;
+  color: var(--muted);
+  background: #ffffff;
+}
+
+.empty-mode-panel strong,
+.empty-analysis-panel strong {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
 .suggestion-box {
   position: absolute;
   top: calc(100% + 10px);
@@ -228,6 +281,52 @@ em {
   overflow: hidden;
   background: #ffffff;
   box-shadow: var(--shadow);
+}
+
+.industry-picker-modal {
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 24px;
+  border-radius: 28px;
+  background: #ffffff;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.14);
+}
+
+.picker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.picker-header h3 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.industry-option-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.industry-option {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.industry-option strong,
+.industry-option span {
+  display: block;
+}
+
+.industry-option span {
+  margin-top: 8px;
+  color: var(--muted);
 }
 
 .suggestion-item {
@@ -511,14 +610,15 @@ em {
   margin-top: 12px;
 }
 
+.chart-stage {
+  position: relative;
+}
+
 .metric-line {
   stroke-width: 3;
   vector-effect: non-scaling-stroke;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-dasharray: 300;
-  stroke-dashoffset: 300;
-  animation: drawLine 1s ease forwards;
 }
 
 .metric-line.company {
@@ -529,13 +629,20 @@ em {
   stroke: var(--average);
 }
 
-.chart-hitbox {
-  fill: transparent;
-  pointer-events: all;
+.chart-dot {
+  stroke: #ffffff;
+  stroke-width: 0.6;
+}
+
+.chart-dot.company {
+  fill: #111827;
+}
+
+.chart-dot.average {
+  fill: var(--average);
 }
 
 .chart-tooltip {
-  margin-top: 12px;
   display: inline-grid;
   gap: 4px;
   padding: 12px 14px;
@@ -543,6 +650,12 @@ em {
   border-radius: 14px;
   background: #ffffff;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+}
+
+.chart-tooltip.floating {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
 }
 
 .chart-tooltip strong,
@@ -729,15 +842,7 @@ em {
   font-size: 2rem;
 }
 
-@keyframes drawLine {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
 @media (max-width: 1100px) {
-  .hero-hints,
-  .info-strip,
   .metric-selector,
   .metric-hero,
   .indicator-grid,
@@ -751,19 +856,24 @@ em {
 }
 
 @media (max-width: 760px) {
-  .landing {
-    width: min(100% - 24px, 100%);
-    padding: 24px 0 48px;
+  .app-shell {
+    grid-template-columns: 1fr;
   }
 
-  .hero-panel,
+  .side-nav {
+    position: static;
+    min-height: auto;
+    grid-auto-flow: column;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .top-search-bar,
   .analysis-modal {
     padding: 20px;
   }
 
   .search-shell,
-  .hero-hints,
-  .info-strip,
   .metric-selector,
   .metric-hero,
   .indicator-grid,
