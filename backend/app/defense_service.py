@@ -287,7 +287,9 @@ def _comparison_metrics(values: dict[str, float | None], industry_id: str) -> di
         "operating_margin": _safe_div(operating_income, revenue, 100),
         "inventory_ratio": _safe_div(inventory, revenue, 100),
         "capex_ratio": _safe_div(capex, revenue, 100),
-        "cfo_conversion": _safe_div(cfo, net_income),
+        # Defense financial facts carry no 당기순이익 account, so cfo conversion falls back to
+        # operating income — the same denominator the dedicated defense liquidity metric uses.
+        "cfo_conversion": _safe_div(cfo, operating_income) if industry_id == "defense" else _safe_div(cfo, net_income),
     }
     if industry_id == "construction":
         metrics.update(
@@ -537,11 +539,12 @@ def get_industry_company_comparison(
     }
     audit_questions = [questions_by_signal[signal["code"]] for signal in row["riskSignals"]]
     if not audit_questions:
-        audit_questions = [
-            "위험 신호가 없더라도 계약자산·매출채권·차입금·영업현금흐름의 연도별 방향성과 사업 설명의 일관성을 확인하세요."
-            if industry_id == "construction"
-            else "위험 신호가 없더라도 재고·CAPEX·현금흐름의 연도별 방향성과 사업 설명의 일관성을 확인하세요."
-        ]
+        fallback_by_industry = {
+            "construction": "위험 신호가 없더라도 계약자산·매출채권·차입금·영업현금흐름의 연도별 방향성과 사업 설명의 일관성을 확인하세요.",
+            "semiconductor": "위험 신호가 없더라도 재고·CAPEX·현금흐름의 연도별 방향성과 사업 설명의 일관성을 확인하세요.",
+            "defense": "위험 신호가 없더라도 계약자산·계약부채·매출채권·영업현금흐름의 연도별 방향성과 수익인식 방식의 일관성을 확인하세요. 방산의 계약자산·현금화 전용 신호는 기업 상세의 현금화 리스크 분석에서 확인하세요.",
+        }
+        audit_questions = [fallback_by_industry.get(industry_id, fallback_by_industry["semiconductor"])]
     return {
         "industryId": comparison["industryId"],
         "year": comparison["year"],
@@ -553,6 +556,8 @@ def get_industry_company_comparison(
             "연결(CFS) 값을 우선 사용하고 값이 없을 때 별도(OFS) 값을 사용합니다. 건설 신호는 A/B/C 승인 전 전체 65개사 분포의 3사분위와 영업현금흐름 음수를 사용한 추가 검토 우선순위이며 결론이 아닙니다."
             if industry_id == "construction"
             else "연결(CFS) 값을 우선 사용하고 값이 없을 때 별도(OFS) 값을 사용합니다. 산업 3사분위와 0.5배 기준은 추가 검토 우선순위이며 결론이 아닙니다."
+            if industry_id == "semiconductor"
+            else "연결(CFS) 값을 우선 사용하고 값이 없을 때 별도(OFS) 값을 사용합니다. 방산은 이 화면에서 공통 지표만 계산하며, 계약자산·순계약자산 기반의 정식 위험 신호는 기업 상세의 현금화 리스크 분석에서 확인하세요."
         ),
     }
 
