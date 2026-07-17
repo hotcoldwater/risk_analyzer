@@ -302,14 +302,23 @@ function ComparisonInspector({ comparison, detailData, isLoading, onOpenCompany,
 function ComparisonControls({ activeIndustryId, onIndustryChange, year, availableYears, onYearChange, searchTerm, onSearchChange, riskFilter, onRiskFilterChange, riskLevels }) {
   return (
     <div className="comparison-controls">
-      <label className="control-field">
+      <div className="control-field">
         <span>산업</span>
-        <select onChange={(event) => onIndustryChange(event.target.value)} value={activeIndustryId}>
+        <div className="industry-tab-group" role="tablist">
           {industryOptions.map((option) => (
-            <option key={option.id} value={option.id}>{option.label}</option>
+            <button
+              aria-selected={activeIndustryId === option.id}
+              className={`industry-tab ${activeIndustryId === option.id ? "active" : ""}`}
+              key={option.id}
+              onClick={() => onIndustryChange(option.id)}
+              role="tab"
+              type="button"
+            >
+              {option.label}
+            </button>
           ))}
-        </select>
-      </label>
+        </div>
+      </div>
       <label className="control-field">
         <span>연도</span>
         <select disabled={!availableYears?.length} onChange={(event) => onYearChange(Number(event.target.value))} value={year}>
