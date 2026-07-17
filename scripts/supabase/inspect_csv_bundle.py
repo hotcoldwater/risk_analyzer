@@ -23,8 +23,10 @@ def read_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
         return reader.fieldnames or [], list(reader)
 
 
-def clean_identifier(value: str | None) -> str:
-    return (value or "").strip().strip('"').strip()
+def clean_identifier(value: str | None, width: int | None = None) -> str:
+    """Use the same spreadsheet identifier normalization as the uploader."""
+    cleaned = (value or "").strip().strip('"').strip()
+    return cleaned.zfill(width) if width and cleaned.isdigit() else cleaned
 
 
 def bundle_paths(bundle_dir: Path) -> dict[str, Path]:
@@ -46,27 +48,31 @@ def inspect(bundle_dir: Path) -> dict[str, object]:
 
     _, companies = read_rows(paths["companies_basic"])
     _, industry_map = read_rows(paths["industry_map"])
-    company_codes = {clean_identifier(row.get("corp_code")) for row in companies}
-    duplicate_companies = [code for code, count in Counter(clean_identifier(row.get("corp_code")) for row in companies).items() if count > 1]
+    company_codes = {clean_identifier(row.get("corp_code"), width=8) for row in companies}
+    duplicate_companies = [
+        code
+        for code, count in Counter(clean_identifier(row.get("corp_code"), width=8) for row in companies).items()
+        if count > 1
+    ]
     if duplicate_companies:
         issues.append({"severity": "error", "code": "duplicate_company_master", "corp_codes": sorted(duplicate_companies)})
 
     map_by_industry: dict[str, set[str]] = {}
     for row in industry_map:
         industry = (row.get("industry_id") or "").strip()
-        map_by_industry.setdefault(industry, set()).add(clean_identifier(row.get("corp_code")))
+        map_by_industry.setdefault(industry, set()).add(clean_identifier(row.get("corp_code"), width=8))
 
     industries: dict[str, object] = {}
     for industry_id, path in sorted(paths.items()):
         if industry_id in required:
             continue
         headers, rows = read_rows(path)
-        codes = {clean_identifier(row.get("corp_code")) for row in rows}
+        codes = {clean_identifier(row.get("corp_code"), width=8) for row in rows}
         missing_from_master = sorted(codes - company_codes)
         missing_from_map = sorted(codes - map_by_industry.get(industry_id, set()))
         natural_keys = Counter(
             (
-                clean_identifier(row.get("corp_code")),
+                clean_identifier(row.get("corp_code"), width=8),
                 row.get("year", "").strip(),
                 row.get("fs_div", "").strip(),
                 row.get("sj_div", "").strip(),
@@ -88,7 +94,15 @@ def inspect(bundle_dir: Path) -> dict[str, object]:
         if missing_from_master:
             issues.append({"severity": "error", "code": "missing_company_master", "industry": industry_id, "count": len(missing_from_master)})
         if missing_from_map:
-            issues.append({"severity": "error", "code": "missing_industry_mapping", "industry": industry_id, "count": len(missing_from_map)})
+            issues.append(
+                {
+                    "severity": "warning",
+                    "code": "missing_industry_mapping",
+                    "industry": industry_id,
+                    "count": len(missing_from_map),
+                    "detail": "Upload with --auto-map-unclassified-industries to create safe UNCLASSIFIED memberships.",
+                }
+            )
         if duplicates:
             issues.append({"severity": "error", "code": "duplicate_financial_fact", "industry": industry_id, "count": duplicates})
 

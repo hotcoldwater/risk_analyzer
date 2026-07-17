@@ -174,6 +174,10 @@ class IndustryComparisonRow(BaseModel):
     completeness: int
     required_account_count: int = Field(alias="requiredAccountCount")
     metrics: dict[str, float | None]
+    risk_level: str = Field(alias="riskLevel")
+    risk_signals: list[dict[str, str]] = Field(alias="riskSignals")
+    peer_group_suggestion: str | None = Field(default=None, alias="peerGroupSuggestion")
+    peer_group_rationale: str | None = Field(default=None, alias="peerGroupRationale")
 
 
 class IndustryComparisonResponse(BaseModel):
@@ -183,6 +187,18 @@ class IndustryComparisonResponse(BaseModel):
     year: int
     metric_definitions: list[dict[str, str]] = Field(alias="metricDefinitions")
     rows: list[IndustryComparisonRow]
+
+
+class IndustryCompanyComparisonResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    industry_id: str = Field(alias="industryId")
+    year: int
+    metric_definitions: list[dict[str, str]] = Field(alias="metricDefinitions")
+    row: IndustryComparisonRow
+    account_series: list[dict] = Field(alias="accountSeries")
+    audit_questions: list[str] = Field(alias="auditQuestions")
+    limitations: str
 
 
 class LiquiditySeriesPoint(BaseModel):

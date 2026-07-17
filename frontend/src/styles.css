@@ -709,7 +709,57 @@ em {
 
 .comparison-table tbody tr:hover {
   background: #f8fbff;
+  cursor: pointer;
 }
+
+.risk-badge {
+  display: inline-block;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #edf2f7;
+  color: #475467;
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.risk-badge.주의 { background: #fff4e5; color: #a15c07; }
+.risk-badge.위험 { background: #fef0ef; color: #b42318; }
+
+.comparison-detail {
+  margin-top: 16px;
+  padding: 20px;
+  border: 1px solid #dbe5f1;
+  border-radius: 22px;
+  background: #f8fbff;
+}
+
+.comparison-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.comparison-detail-actions { display: flex; gap: 8px; }
+
+.account-series, .audit-questions { margin-top: 18px; padding: 18px; border: 1px solid var(--line); border-radius: 20px; background: #fbfcfe; }
+.account-series h5 { margin: 0; font-size: 1.05rem; }
+.account-series-table { margin-top: 14px; overflow-x: auto; }
+.series-head, .series-line { display: grid; grid-template-columns: 1.25fr repeat(3, minmax(120px, 1fr)); min-width: 620px; }
+.series-head span, .series-line strong, .series-line span { padding: 11px; border-bottom: 1px solid var(--line); text-align: right; }
+.series-head span { color: var(--muted); font-size: .78rem; font-weight: 700; }
+.series-head span:first-child, .series-line strong { text-align: left; }
+.audit-questions p:not(.eyebrow) { margin: 9px 0 0; line-height: 1.6; }
+.audit-questions em { display: block; margin-top: 12px; color: var(--muted); font-size: .8rem; font-style: normal; line-height: 1.5; }
+
+.comparison-detail h3 { margin: 0; font-size: 1.45rem; }
+
+.comparison-signal-list { display: grid; gap: 10px; margin-top: 16px; }
+.comparison-signal-list article { position: relative; padding: 15px; border: 1px solid var(--line); border-radius: 16px; background: #ffffff; }
+.comparison-signal-list strong { display: block; }
+.comparison-signal-list span { position: absolute; top: 13px; right: 14px; color: var(--warning); font-size: 0.78rem; font-weight: 700; }
+.comparison-signal-list p, .comparison-empty { margin: 8px 0 0; color: var(--muted); line-height: 1.6; }
 
 .start-steps {
   display: grid;

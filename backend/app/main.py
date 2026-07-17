@@ -14,6 +14,7 @@ from app.defense_service import (
     get_anomaly_analysis,
     get_company_profile,
     get_industry_comparison,
+    get_industry_company_comparison,
     get_industry_summaries,
     get_liquidity_metric,
     resolve_company,
@@ -26,6 +27,7 @@ from app.schemas import (
     ErrorResponse,
     IndustrySummary,
     IndustryComparisonResponse,
+    IndustryCompanyComparisonResponse,
     LiquidityMetricResponse,
 )
 
@@ -119,6 +121,21 @@ def industry_comparison(industry_id: str, year: int = 2025) -> IndustryCompariso
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return IndustryComparisonResponse(**payload)
+
+
+@app.get(
+    "/api/industries/{industry_id}/companies/{corp_code}/comparison",
+    response_model=IndustryCompanyComparisonResponse,
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def industry_company_comparison(industry_id: str, corp_code: str, year: int = 2025) -> IndustryCompanyComparisonResponse:
+    try:
+        payload = get_industry_company_comparison(settings.supabase_database_url, industry_id, corp_code, year)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return IndustryCompanyComparisonResponse(**payload)
 
 
 @app.get(
