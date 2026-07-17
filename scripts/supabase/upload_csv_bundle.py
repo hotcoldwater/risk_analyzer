@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from decimal import Decimal, InvalidOperation
 import os
 from dataclasses import dataclass
 from datetime import date
@@ -26,6 +27,16 @@ COMPANIES_BASIC_HEADERS = [
     "memo",
     "updated_at",
 ]
+
+# The first eight fields are the backwards-compatible company master contract.
+# These fields were added to the July 2026 bundle and are intentionally optional
+# while old upload/ bundles are still supported.
+COMPANIES_BASIC_OPTIONAL_HEADERS = [
+    "수익인식기준",
+    "수익인식 코드",
+    "분류",
+]
+COMPANIES_BASIC_ALL_HEADERS = COMPANIES_BASIC_HEADERS + COMPANIES_BASIC_OPTIONAL_HEADERS
 
 INDUSTRY_MAP_HEADERS = [
     "corp_code",
@@ -139,22 +150,28 @@ def clean_text(value: str) -> str | None:
     return stripped or None
 
 
-def parse_amount(value: str, row_number: int, path: Path) -> int | None:
+def clean_identifier(value: str, width: int | None = None) -> str:
+    """Remove spreadsheet-export quoting without changing meaningful content."""
+    cleaned = value.strip().strip('"').strip()
+    if width and cleaned.isdigit():
+        return cleaned.zfill(width)
+    return cleaned
+
+
+def parse_amount(value: str, row_number: int, path: Path) -> Decimal | None:
     stripped = value.strip()
     if not stripped:
         return None
-    normalized = stripped.replace(",", "")
-    if normalized.startswith("+"):
-        normalized = normalized[1:]
-    if not normalized or normalized == "-":
+    normalized = stripped.replace(",", "").replace(" ", "")
+    if not normalized or normalized in {"-", "+"}:
         raise ValueError(f"{path.name}:{row_number} invalid amount: {value}")
-    if normalized.startswith("-"):
-        body = normalized[1:]
-        if not body.isdigit():
-            raise ValueError(f"{path.name}:{row_number} invalid amount: {value}")
-    elif not normalized.isdigit():
+    try:
+        amount = Decimal(normalized)
+    except InvalidOperation as error:
         raise ValueError(f"{path.name}:{row_number} invalid amount: {value}")
-    return int(normalized)
+    if not amount.is_finite():
+        raise ValueError(f"{path.name}:{row_number} invalid amount: {value}")
+    return amount
 
 
 def validate_headers(path: Path, expected_headers: list[str]) -> None:
@@ -168,16 +185,54 @@ def validate_headers(path: Path, expected_headers: list[str]) -> None:
         raise ValueError(f"{path.name} header mismatch: expected={expected_headers}, actual={headers}")
 
 
-def load_companies_basic(path: Path) -> tuple[list[tuple[Any, ...]], dict[str, dict[str, str]]]:
-    validate_headers(path, COMPANIES_BASIC_HEADERS)
+def validate_companies_basic_headers(path: Path) -> list[str]:
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        reader = csv.reader(file)
+        try:
+            headers = next(reader)
+        except StopIteration as error:
+            raise ValueError(f"{path.name} is empty") from error
+    if tuple(headers) not in {tuple(COMPANIES_BASIC_HEADERS), tuple(COMPANIES_BASIC_ALL_HEADERS)}:
+        raise ValueError(
+            f"{path.name} header mismatch: expected={COMPANIES_BASIC_HEADERS} "
+            f"or {COMPANIES_BASIC_ALL_HEADERS}, actual={headers}"
+        )
+    return headers
+
+
+def normalize_industry_headers(path: Path) -> None:
+    """Accept the legacy blank memo/updated_at headers only when both are blank.
+
+    The actual row positions still have to match the standard 10-field contract;
+    this makes the accepted cleanup explicit and avoids treating arbitrary headers
+    as valid financial data.
+    """
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        reader = csv.reader(file)
+        try:
+            headers = next(reader)
+        except StopIteration as error:
+            raise ValueError(f"{path.name} is empty") from error
+    if headers == INDUSTRY_TABLE_HEADERS:
+        return
+    if headers == INDUSTRY_TABLE_HEADERS[:8] + ["", ""]:
+        return
+    raise ValueError(f"{path.name} header mismatch: expected={INDUSTRY_TABLE_HEADERS}, actual={headers}")
+
+
+def load_companies_basic(
+    path: Path,
+    default_updated_at: date | None = None,
+) -> tuple[list[tuple[Any, ...]], dict[str, dict[str, str]]]:
+    headers = validate_companies_basic_headers(path)
     rows: list[tuple[Any, ...]] = []
     master: dict[str, dict[str, str]] = {}
 
     with path.open(encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
         for row_number, row in enumerate(reader, start=2):
-            corp_code = row["corp_code"].strip()
-            stock_code = row["stock_code"].strip()
+            corp_code = clean_identifier(row["corp_code"], width=8)
+            stock_code = clean_identifier(row["stock_code"], width=6)
             corp_name = row["corp_name"].strip()
 
             if not (corp_code.isdigit() and len(corp_code) == 8):
@@ -189,12 +244,24 @@ def load_companies_basic(path: Path) -> tuple[list[tuple[Any, ...]], dict[str, d
             if corp_code in master:
                 raise ValueError(f"{path.name}:{row_number} duplicated corp_code: {corp_code}")
 
-            updated_at = parse_date(row["updated_at"].strip(), "updated_at", row_number, path)
+            updated_at_raw = row["updated_at"].strip()
+            if updated_at_raw:
+                updated_at = parse_date(updated_at_raw, "updated_at", row_number, path)
+            elif default_updated_at is not None:
+                updated_at = default_updated_at
+            else:
+                raise ValueError(
+                    f"{path.name}:{row_number} missing updated_at. "
+                    "Pass --default-updated-at only for an approved bundle-wide default."
+                )
             master[corp_code] = {
                 "corp_code": corp_code,
                 "stock_code": stock_code,
                 "corp_name": corp_name,
             }
+            revenue_recognition_basis = clean_text(row.get("수익인식기준", "")) if headers else None
+            revenue_recognition_code = clean_text(row.get("수익인식 코드", "")) if headers else None
+            classification = clean_text(row.get("분류", "")) if headers else None
             rows.append(
                 (
                     corp_code,
@@ -205,6 +272,9 @@ def load_companies_basic(path: Path) -> tuple[list[tuple[Any, ...]], dict[str, d
                     clean_text(row["ksic_name"]),
                     clean_text(row["memo"]),
                     updated_at,
+                    revenue_recognition_basis,
+                    revenue_recognition_code,
+                    classification,
                 )
             )
 
@@ -230,7 +300,11 @@ def canonicalize_company(
     return company["corp_name"]
 
 
-def load_industry_map(path: Path, master: dict[str, dict[str, str]]) -> list[tuple[Any, ...]]:
+def load_industry_map(
+    path: Path,
+    master: dict[str, dict[str, str]],
+    reconcile_stock_codes: bool = False,
+) -> list[tuple[Any, ...]]:
     validate_headers(path, INDUSTRY_MAP_HEADERS)
     rows: list[tuple[Any, ...]] = []
     seen_keys: set[tuple[str, str]] = set()
@@ -238,10 +312,13 @@ def load_industry_map(path: Path, master: dict[str, dict[str, str]]) -> list[tup
     with path.open(encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
         for row_number, row in enumerate(reader, start=2):
-            corp_code = row["corp_code"].strip()
-            stock_code = row["stock_code"].strip()
+            corp_code = clean_identifier(row["corp_code"], width=8)
+            stock_code = clean_identifier(row["stock_code"], width=6)
             corp_name = row["corp_name"].strip()
             industry_id = row["industry_id"].strip()
+
+            if reconcile_stock_codes and corp_code in master:
+                stock_code = master[corp_code]["stock_code"]
 
             canonical_name = canonicalize_company(
                 path=path,
@@ -280,15 +357,22 @@ def load_industry_map(path: Path, master: dict[str, dict[str, str]]) -> list[tup
 def load_industry_table(
     path: Path,
     master: dict[str, dict[str, str]],
+    default_updated_at: date | None = None,
 ) -> list[tuple[Any, ...]]:
-    validate_headers(path, INDUSTRY_TABLE_HEADERS)
+    normalize_industry_headers(path)
     rows: list[tuple[Any, ...]] = []
 
     with path.open(encoding="utf-8-sig", newline="") as file:
-        reader = csv.DictReader(file)
+        raw_reader = csv.reader(file)
+        headers = next(raw_reader)
+        # Two blank headers are a known spreadsheet export defect in the latest
+        # semiconductor bundle. Rebind their positions to the canonical names
+        # before interpreting the remaining rows.
+        normalized_headers = INDUSTRY_TABLE_HEADERS if headers[-2:] == ["", ""] else headers
+        reader = (dict(zip(normalized_headers, values, strict=True)) for values in raw_reader)
         for row_number, row in enumerate(reader, start=2):
-            corp_code = row["corp_code"].strip()
-            stock_code = row["stock_code"].strip()
+            corp_code = clean_identifier(row["corp_code"], width=8)
+            stock_code = clean_identifier(row["stock_code"], width=6)
             corp_name = row["corp_name"].strip()
 
             if not (corp_code.isdigit() and len(corp_code) == 8):
@@ -326,11 +410,76 @@ def load_industry_table(
                     account_name,
                     parse_amount(row["amount"], row_number, path),
                     clean_text(row["memo"]),
-                    parse_date(row["updated_at"].strip(), "updated_at", row_number, path),
+                    (
+                        parse_date(row["updated_at"].strip(), "updated_at", row_number, path)
+                        if row["updated_at"].strip()
+                        else default_updated_at
+                    ),
                 )
             )
 
+            if rows[-1][-1] is None:
+                raise ValueError(
+                    f"{path.name}:{row_number} missing updated_at. "
+                    "Pass --default-updated-at only for an approved bundle-wide default."
+                )
+
+    duplicate_keys: set[tuple[str, int, str | None, str | None, str]] = set()
+    for corp_code, _, _, year, fs_div, sj_div, account_name, *_ in rows:
+        key = (corp_code, year, fs_div, sj_div, account_name)
+        if key in duplicate_keys:
+            raise ValueError(
+                f"{path.name} duplicated financial fact: corp_code={corp_code}, year={year}, "
+                f"fs_div={fs_div}, sj_div={sj_div}, account_name={account_name}"
+            )
+        duplicate_keys.add(key)
     return rows
+
+
+def discover_consistent_financial_stock_codes(paths: dict[str, Path]) -> dict[str, tuple[str, str]]:
+    """Return a financial-file stock code only when every row agrees."""
+    observed: dict[str, set[tuple[str, str]]] = {}
+    for path in paths.values():
+        with path.open(encoding="utf-8-sig", newline="") as file:
+            reader = csv.reader(file)
+            headers = next(reader, None)
+            if headers is None:
+                continue
+            normalized_headers = INDUSTRY_TABLE_HEADERS if headers[-2:] == ["", ""] else headers
+            if normalized_headers != INDUSTRY_TABLE_HEADERS:
+                continue
+            for values in reader:
+                row = dict(zip(normalized_headers, values, strict=True))
+                corp_code = clean_identifier(row["corp_code"], width=8)
+                stock_code = clean_identifier(row["stock_code"], width=6)
+                corp_name = row["corp_name"].strip()
+                if corp_code and stock_code and corp_name:
+                    observed.setdefault(corp_code, set()).add((stock_code, corp_name))
+    return {corp_code: next(iter(values)) for corp_code, values in observed.items() if len(values) == 1}
+
+
+def reconcile_master_stock_codes(
+    *,
+    companies_rows: list[tuple[Any, ...]],
+    master: dict[str, dict[str, str]],
+    industry_table_paths: dict[str, Path],
+) -> tuple[list[tuple[Any, ...]], list[tuple[str, str, str, str]]]:
+    """Repair a stale master code only when the corporation name also agrees."""
+    financial_codes = discover_consistent_financial_stock_codes(industry_table_paths)
+    corrections: list[tuple[str, str, str, str]] = []
+    replacements: dict[str, str] = {}
+    for corp_code, company in master.items():
+        financial_record = financial_codes.get(corp_code)
+        if financial_record is None:
+            continue
+        financial_stock_code, financial_name = financial_record
+        if company["corp_name"] != financial_name or company["stock_code"] == financial_stock_code:
+            continue
+        corrections.append((corp_code, company["corp_name"], company["stock_code"], financial_stock_code))
+        replacements[corp_code] = financial_stock_code
+        company["stock_code"] = financial_stock_code
+    corrected_rows = [(row[0], replacements.get(row[0], row[1]), *row[2:]) for row in companies_rows]
+    return corrected_rows, corrections
 
 
 def create_companies_basic_table(connection: psycopg.Connection[Any]) -> None:
@@ -345,7 +494,10 @@ def create_companies_basic_table(connection: psycopg.Connection[Any]) -> None:
                 ksic_code TEXT,
                 ksic_name TEXT,
                 memo TEXT,
-                updated_at DATE NOT NULL
+                updated_at DATE NOT NULL,
+                revenue_recognition_basis TEXT,
+                revenue_recognition_code TEXT,
+                classification TEXT
             )
             """
         )
@@ -428,14 +580,75 @@ def copy_rows(
                 copy.write_row(row)
 
 
-def validate_and_load_bundle(bundle: CsvBundle) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]], dict[str, list[tuple[Any, ...]]]]:
-    companies_rows, master = load_companies_basic(bundle.companies_basic_path)
-    industry_map_rows = load_industry_map(bundle.industry_map_path, master)
+def add_unclassified_industry_mappings(
+    *,
+    industry_map_rows: list[tuple[Any, ...]],
+    industry_rows: dict[str, list[tuple[Any, ...]]],
+    default_updated_at: date,
+) -> list[tuple[Any, ...]]:
+    """Add safe placeholder memberships for an approved incomplete bundle.
+
+    These members remain outside A/B/C peer scopes. The mapping makes the
+    industry discoverable while preventing an invented peer-group assignment.
+    """
+    existing = {(industry_id, corp_code) for corp_code, _, _, industry_id, *_ in industry_map_rows}
+    company_industries = {corp_code for corp_code, *_ in industry_map_rows}
+    generated: list[tuple[Any, ...]] = []
+    for industry_id, rows in industry_rows.items():
+        for corp_code, stock_code, corp_name, *_ in rows:
+            key = (industry_id, corp_code)
+            if key in existing:
+                continue
+            generated.append(
+                (
+                    corp_code,
+                    stock_code,
+                    corp_name,
+                    industry_id,
+                    corp_code not in company_industries,
+                    "UNCLASSIFIED",
+                    "미분류",
+                    "자동 생성: 비교그룹(A/B/C) 미분류",
+                    default_updated_at,
+                )
+            )
+            existing.add(key)
+    return industry_map_rows + generated
+
+
+def validate_and_load_bundle(
+    bundle: CsvBundle,
+    *,
+    default_updated_at: date | None = None,
+    auto_map_unclassified_industries: bool = False,
+    reconcile_stock_codes: bool = False,
+) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]], dict[str, list[tuple[Any, ...]]], list[tuple[str, str, str, str]]]:
+    companies_rows, master = load_companies_basic(bundle.companies_basic_path, default_updated_at=default_updated_at)
+    stock_code_corrections: list[tuple[str, str, str, str]] = []
+    if reconcile_stock_codes:
+        companies_rows, stock_code_corrections = reconcile_master_stock_codes(
+            companies_rows=companies_rows,
+            master=master,
+            industry_table_paths=bundle.industry_table_paths,
+        )
+    industry_map_rows = load_industry_map(
+        bundle.industry_map_path,
+        master,
+        reconcile_stock_codes=reconcile_stock_codes,
+    )
     industry_rows = {
-        table_name: load_industry_table(path, master)
+        table_name: load_industry_table(path, master, default_updated_at=default_updated_at)
         for table_name, path in sorted(bundle.industry_table_paths.items())
     }
-    return companies_rows, industry_map_rows, industry_rows
+    if auto_map_unclassified_industries:
+        if default_updated_at is None:
+            raise ValueError("--auto-map-unclassified-industries requires --default-updated-at.")
+        industry_map_rows = add_unclassified_industry_mappings(
+            industry_map_rows=industry_map_rows,
+            industry_rows=industry_rows,
+            default_updated_at=default_updated_at,
+        )
+    return companies_rows, industry_map_rows, industry_rows, stock_code_corrections
 
 
 def upload_bundle(
@@ -470,7 +683,11 @@ def upload_bundle(
             for table_name in industry_rows:
                 create_industry_table(connection, table_name)
 
-            copy_rows(connection, "companies_basic", COMPANIES_BASIC_HEADERS, companies_rows)
+            copy_rows(connection, "companies_basic", COMPANIES_BASIC_HEADERS + [
+                "revenue_recognition_basis",
+                "revenue_recognition_code",
+                "classification",
+            ], companies_rows)
             copy_rows(connection, "industry_map", INDUSTRY_MAP_HEADERS, industry_map_rows)
             for table_name, rows in industry_rows.items():
                 copy_rows(connection, table_name, INDUSTRY_TABLE_HEADERS, rows)
@@ -491,6 +708,21 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Directory containing CSV upload files. Default: {DEFAULT_UPLOAD_DIR}",
     )
     parser.add_argument(
+        "--default-updated-at",
+        type=date.fromisoformat,
+        help="Approved fallback date for blank companies_basic.updated_at values (YYYY-MM-DD).",
+    )
+    parser.add_argument(
+        "--auto-map-unclassified-industries",
+        action="store_true",
+        help="Create UNCLASSIFIED memberships for industry-table companies missing from industry_map.",
+    )
+    parser.add_argument(
+        "--reconcile-stock-codes",
+        action="store_true",
+        help="Reconcile matching company-master stock codes from internally consistent financial CSVs.",
+    )
+    parser.add_argument(
         "--validate-only",
         action="store_true",
         help="Validate CSV files without uploading to Supabase.",
@@ -506,13 +738,22 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     bundle = discover_bundle(args.upload_dir)
-    companies_rows, industry_map_rows, industry_rows = validate_and_load_bundle(bundle)
+    companies_rows, industry_map_rows, industry_rows, stock_code_corrections = validate_and_load_bundle(
+        bundle,
+        default_updated_at=args.default_updated_at,
+        auto_map_unclassified_industries=args.auto_map_unclassified_industries,
+        reconcile_stock_codes=args.reconcile_stock_codes,
+    )
 
     print("Validation completed.")
     print(f"- companies_basic: {len(companies_rows):,} rows")
     print(f"- industry_map: {len(industry_map_rows):,} rows")
     for table_name, rows in industry_rows.items():
         print(f"- {table_name}: {len(rows):,} rows")
+    if stock_code_corrections:
+        print(f"- reconciled stock codes: {len(stock_code_corrections):,}")
+        for corp_code, corp_name, previous, current in stock_code_corrections:
+            print(f"  - {corp_code} {corp_name}: {previous} -> {current}")
 
     if args.validate_only:
         return

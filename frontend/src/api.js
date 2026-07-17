@@ -42,6 +42,20 @@ export function fetchCompanySearch(query) {
   );
 }
 
+export function fetchIndustries() {
+  return fetchJson(
+    "/api/industries",
+    "산업 데이터를 불러오지 못했습니다.",
+  );
+}
+
+export function fetchIndustryComparison(industryId, year = 2025) {
+  return fetchJson(
+    `/api/industries/${encodeURIComponent(industryId)}/comparison?year=${encodeURIComponent(year)}`,
+    "산업 비교 데이터를 불러오지 못했습니다.",
+  );
+}
+
 export function fetchResolvedCompany(query) {
   return fetchJson(
     `/api/company-resolve?query=${encodeURIComponent(query)}`,

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 
 
@@ -94,7 +96,7 @@ def _format_source_label(fs_div: str | None) -> str:
 def _safe_div(numerator: float | None, denominator: float | None, multiplier: float = 1.0) -> float | None:
     if numerator is None or denominator is None or denominator == 0:
         return None
-    return numerator / denominator * multiplier
+    return float(numerator / denominator) * multiplier
 
 
 def _growth_pct(current: float | None, previous: float | None) -> float | None:
@@ -197,6 +199,151 @@ def get_company_profile(database_url: str, corp_code: str) -> dict[str, Any]:
         "company": dict(company),
         "groups": groups,
         "analyses": ANALYSIS_LABELS,
+    }
+
+
+def get_industry_summaries(database_url: str) -> list[dict[str, Any]]:
+    with _connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                industry_id,
+                COUNT(DISTINCT corp_code) AS company_count,
+                COUNT(DISTINCT corp_code) FILTER (WHERE level IN ('A', 'B', 'C')) AS classified_company_count,
+                MAX(updated_at) AS updated_at
+            FROM public.industry_map
+            GROUP BY industry_id
+            ORDER BY industry_id
+            """
+        )
+        rows = cursor.fetchall()
+
+    summaries = []
+    for row in rows:
+        industry_id = row["industry_id"]
+        is_ready = industry_id == "defense"
+        summaries.append(
+            {
+                "industryId": industry_id,
+                "companyCount": row["company_count"],
+                "classifiedCompanyCount": row["classified_company_count"],
+                "updatedAt": row["updated_at"].isoformat() if row["updated_at"] else None,
+                "analysisStatus": "ready" if is_ready else "prepared",
+                "availableThemes": ["현금화·수익인식", "이상징후"] if is_ready else [],
+            }
+        )
+    return summaries
+
+
+INDUSTRY_COMPARISON_ACCOUNTS = {
+    "semiconductor": ["매출액", "영업이익", "당기순이익", "영업활동현금흐름", "재고자산", "유형자산의 취득"],
+    "construction": ["매출액", "영업이익", "당기순이익", "영업활동현금흐름", "재고자산", "매출채권", "차입금", "충당부채"],
+    "defense": TARGET_ACCOUNTS,
+}
+
+
+def _basis_priority(fs_div: str | None) -> int:
+    return {"CFS": 0, "OFS": 1}.get(fs_div or "", 2)
+
+
+def _industry_metric_definitions(industry_id: str) -> list[dict[str, str]]:
+    if industry_id == "semiconductor":
+        return [
+            {"code": "revenue", "label": "매출액", "unit": "KRW"},
+            {"code": "operating_margin", "label": "영업이익률", "unit": "%"},
+            {"code": "inventory_ratio", "label": "재고/매출", "unit": "%"},
+            {"code": "capex_ratio", "label": "CAPEX/매출", "unit": "%"},
+            {"code": "cfo_conversion", "label": "영업현금흐름 전환율", "unit": "배"},
+        ]
+    return [
+        {"code": "revenue", "label": "매출액", "unit": "KRW"},
+        {"code": "operating_margin", "label": "영업이익률", "unit": "%"},
+        {"code": "cfo_conversion", "label": "영업현금흐름 전환율", "unit": "배"},
+    ]
+
+
+def _comparison_metrics(values: dict[str, float | None]) -> dict[str, float | None]:
+    revenue = values.get("매출액")
+    operating_income = values.get("영업이익")
+    net_income = values.get("당기순이익")
+    cfo = values.get("영업활동현금흐름")
+    inventory = values.get("재고자산")
+    capex = values.get("유형자산의 취득")
+    return {
+        "revenue": revenue,
+        "operating_margin": _safe_div(operating_income, revenue, 100),
+        "inventory_ratio": _safe_div(inventory, revenue, 100),
+        "capex_ratio": _safe_div(capex, revenue, 100),
+        "cfo_conversion": _safe_div(cfo, net_income),
+    }
+
+
+def get_industry_comparison(database_url: str, industry_id: str, year: int = CURRENT_YEAR) -> dict[str, Any]:
+    if industry_id not in INDUSTRY_COMPARISON_ACCOUNTS or not re.fullmatch(r"[a-z_]+", industry_id):
+        raise ValueError("지원하지 않는 산업입니다.")
+
+    accounts = INDUSTRY_COMPARISON_ACCOUNTS[industry_id]
+    with _connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL(
+                """
+                SELECT m.corp_code, m.stock_code, m.corp_name, m.level, f.fs_div, f.account_name, f.amount
+                FROM public.industry_map AS m
+                LEFT JOIN public.{} AS f
+                  ON f.corp_code = m.corp_code
+                 AND f.year = %(year)s
+                 AND f.account_name = ANY(%(accounts)s)
+                WHERE m.industry_id = %(industry_id)s
+                ORDER BY m.corp_name
+                """
+            ).format(sql.Identifier(industry_id)),
+            {"year": year, "accounts": accounts, "industry_id": industry_id},
+        )
+        records = cursor.fetchall()
+
+    companies: dict[str, dict[str, Any]] = {}
+    selected_values: dict[str, dict[str, tuple[int, float | None, str | None]]] = {}
+    for record in records:
+        corp_code = record["corp_code"]
+        companies.setdefault(
+            corp_code,
+            {
+                "corpCode": corp_code,
+                "stockCode": record["stock_code"],
+                "corpName": record["corp_name"],
+                "level": record["level"],
+            },
+        )
+        if record["account_name"] is None:
+            continue
+        account_values = selected_values.setdefault(corp_code, {})
+        priority = _basis_priority(record["fs_div"])
+        previous = account_values.get(record["account_name"])
+        if previous is None or priority < previous[0]:
+            account_values[record["account_name"]] = (priority, record["amount"], record["fs_div"])
+
+    rows = []
+    for corp_code, company in companies.items():
+        entries = selected_values.get(corp_code, {})
+        values = {account: entries.get(account, (99, None, None))[1] for account in accounts}
+        basis = next((entry[2] for entry in entries.values() if entry[2] == "CFS"), None) or next(
+            (entry[2] for entry in entries.values() if entry[2]), None
+        )
+        rows.append(
+            {
+                **company,
+                "basis": basis,
+                "completeness": sum(value is not None for value in values.values()),
+                "requiredAccountCount": len(accounts),
+                "metrics": _comparison_metrics(values),
+            }
+        )
+
+    return {
+        "industryId": industry_id,
+        "year": year,
+        "metricDefinitions": _industry_metric_definitions(industry_id),
+        "rows": rows,
     }
 
 
@@ -513,6 +660,46 @@ def _average_series(
     return points
 
 
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    position = (len(values) - 1) * percentile
+    lower = int(position)
+    upper = min(lower + 1, len(values) - 1)
+    weight = position - lower
+    return values[lower] + (values[upper] - values[lower]) * weight
+
+
+def _peer_distribution(
+    metric_code: str,
+    eligible_peer_codes: list[str],
+    company_index: dict[str, dict[int, list[dict[str, Any]]]],
+    company_value: float | None,
+) -> dict[str, Any]:
+    values: list[float] = []
+    for peer_code in eligible_peer_codes:
+        snapshot = _peer_metric_snapshot(metric_code, peer_code, company_index)
+        value = _metric_value(metric_code, snapshot["series"][CURRENT_YEAR], snapshot["series"].get(CURRENT_YEAR - 1))
+        if value is not None:
+            values.append(value)
+    values.sort()
+    percentile = None
+    if values and company_value is not None:
+        percentile = sum(value <= company_value for value in values) / len(values) * 100
+    return {
+        "sampleSize": len(values),
+        "minimum": values[0] if values else None,
+        "firstQuartile": _percentile(values, 0.25),
+        "median": _percentile(values, 0.5),
+        "thirdQuartile": _percentile(values, 0.75),
+        "maximum": values[-1] if values else None,
+        "companyPercentile": percentile,
+        "note": "백분위는 동일 비교군에서 현재 기업 값 이하인 기업의 비율이며, 지표의 좋고 나쁨을 뜻하지 않습니다.",
+    }
+
+
 def get_liquidity_metric(
     database_url: str,
     corp_code: str,
@@ -556,6 +743,7 @@ def get_liquidity_metric(
     eligible_peer_codes = _eligible_peer_codes(metric_code, peer_codes, company_index)
     average_points = _average_series(metric_code, eligible_peer_codes, company_index)
     average_members = _average_member_rows(metric_code, eligible_peer_codes, company_index)
+    peer_distribution = _peer_distribution(metric_code, eligible_peer_codes, company_index, current_value)
 
     series = []
     for year in YEARS:
@@ -596,6 +784,7 @@ def get_liquidity_metric(
         "averageEligibleCompanyCount": len(eligible_peer_codes),
         "averageMembers": average_members,
         "averageCoverageYears": _metric_required_years(metric_code),
+        "peerDistribution": peer_distribution,
         "series": series,
         "details": _metric_detail_rows(metric_code, company_series),
         "formula": metric_definition["description"],

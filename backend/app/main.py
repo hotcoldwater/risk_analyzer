@@ -13,6 +13,8 @@ from app.database import initialize_database
 from app.defense_service import (
     get_anomaly_analysis,
     get_company_profile,
+    get_industry_comparison,
+    get_industry_summaries,
     get_liquidity_metric,
     resolve_company,
     search_companies,
@@ -22,6 +24,8 @@ from app.schemas import (
     CompanyProfileResponse,
     CompanySuggestion,
     ErrorResponse,
+    IndustrySummary,
+    IndustryComparisonResponse,
     LiquidityMetricResponse,
 )
 
@@ -93,6 +97,28 @@ def company_search(q: str) -> list[CompanySuggestion]:
         )
         for item in items
     ]
+
+
+@app.get(
+    "/api/industries",
+    response_model=list[IndustrySummary],
+    responses={500: {"model": ErrorResponse}},
+)
+def industries() -> list[IndustrySummary]:
+    return [IndustrySummary(**item) for item in get_industry_summaries(settings.supabase_database_url)]
+
+
+@app.get(
+    "/api/industries/{industry_id}/comparison",
+    response_model=IndustryComparisonResponse,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def industry_comparison(industry_id: str, year: int = 2025) -> IndustryComparisonResponse:
+    try:
+        payload = get_industry_comparison(settings.supabase_database_url, industry_id=industry_id, year=year)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return IndustryComparisonResponse(**payload)
 
 
 @app.get(
