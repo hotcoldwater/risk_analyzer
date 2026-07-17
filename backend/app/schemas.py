@@ -152,6 +152,39 @@ class CompanyProfileResponse(BaseModel):
     analyses: list[dict]
 
 
+class IndustrySummary(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    industry_id: str = Field(alias="industryId")
+    company_count: int = Field(alias="companyCount")
+    classified_company_count: int = Field(alias="classifiedCompanyCount")
+    updated_at: str | None = Field(default=None, alias="updatedAt")
+    analysis_status: str = Field(alias="analysisStatus")
+    available_themes: list[str] = Field(alias="availableThemes")
+
+
+class IndustryComparisonRow(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    corp_code: str = Field(alias="corpCode")
+    stock_code: str = Field(alias="stockCode")
+    corp_name: str = Field(alias="corpName")
+    level: str | None = None
+    basis: str | None = None
+    completeness: int
+    required_account_count: int = Field(alias="requiredAccountCount")
+    metrics: dict[str, float | None]
+
+
+class IndustryComparisonResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    industry_id: str = Field(alias="industryId")
+    year: int
+    metric_definitions: list[dict[str, str]] = Field(alias="metricDefinitions")
+    rows: list[IndustryComparisonRow]
+
+
 class LiquiditySeriesPoint(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -199,6 +232,19 @@ class AverageMemberRow(BaseModel):
     accounts: list[AverageAccountRow]
 
 
+class PeerDistribution(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    sample_size: int = Field(alias="sampleSize")
+    minimum: float | None = None
+    first_quartile: float | None = Field(default=None, alias="firstQuartile")
+    median: float | None = None
+    third_quartile: float | None = Field(default=None, alias="thirdQuartile")
+    maximum: float | None = None
+    company_percentile: float | None = Field(default=None, alias="companyPercentile")
+    note: str
+
+
 class LiquidityMetricResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -219,6 +265,7 @@ class LiquidityMetricResponse(BaseModel):
     average_eligible_company_count: int = Field(alias="averageEligibleCompanyCount")
     average_members: list[AverageMemberRow] = Field(alias="averageMembers")
     average_coverage_years: list[int] = Field(alias="averageCoverageYears")
+    peer_distribution: PeerDistribution = Field(alias="peerDistribution")
     series: list[LiquiditySeriesPoint]
     details: list[MetricDetailRow]
     formula: str
