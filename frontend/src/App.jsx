@@ -340,7 +340,7 @@ function ComparisonControls({ activeIndustryId, onIndustryChange, year, availabl
   );
 }
 
-function IndustryComparisonTable({ comparison, activeIndustryId, onIndustryChange, year, availableYears, onYearChange, onOpenInsights, onOpenCompany }) {
+function IndustryComparisonTable({ comparison, activeIndustryId, onIndustryChange, year, availableYears, onYearChange, onOpenCompany }) {
   const [sortCode, setSortCode] = useState("revenue");
   const [sortDirection, setSortDirection] = useState("desc");
   const [searchTerm, setSearchTerm] = useState("");
@@ -379,105 +379,7 @@ function IndustryComparisonTable({ comparison, activeIndustryId, onIndustryChang
 
   function selectSort(code) { if (code === sortCode) setSortDirection((current) => current === "desc" ? "asc" : "desc"); else { setSortCode(code); setSortDirection("desc"); } }
 
-  return <section className="comparison-section"><div className="comparison-head"><div><p className="eyebrow">전체 기업 · {comparison.year}</p><h2>{industryLabels[comparison.industryId] || comparison.industryId} 기업 목록</h2><p>{comparison.industryId === "construction" ? "A/B/C 분류 전 전체 표본을 보는 탐색용 비교입니다. 신호는 검토 우선순위이며, 정식 동종 벤치마크는 아닙니다." : "연결(CFS) 우선으로 수집하며, 값이 없을 경우 별도(OFS) 기준을 사용합니다."}</p></div><button className="ghost-button" onClick={onOpenInsights} type="button">산업 분석 보기</button></div><ComparisonControls activeIndustryId={activeIndustryId} availableYears={availableYears} onIndustryChange={onIndustryChange} onRiskFilterChange={setRiskFilter} onSearchChange={setSearchTerm} onYearChange={onYearChange} riskFilter={riskFilter} riskLevels={riskLevels} searchTerm={searchTerm} year={year} /><ComparisonKpiStrip comparison={comparison} rows={filteredRows} /><div className="comparison-workbench"><div className="comparison-table-wrap">{sortedRows.length ? <table className="comparison-table"><thead><tr><th>기업</th><th>기준</th><th>데이터</th>{comparison.industryId === "construction" ? <th>비교군 후보</th> : null}<th>검토 신호</th>{definitions.map((definition) => <th key={definition.code}><button onClick={() => selectSort(definition.code)} type="button">{definition.label} {sortCode === definition.code ? (sortDirection === "desc" ? "↓" : "↑") : "↕"}</button></th>)}</tr></thead><tbody>{sortedRows.map((row) => <tr className={selectedRow?.corpCode === row.corpCode ? "selected" : ""} key={row.corpCode} onClick={() => setSelectedRow(row)}><td><strong>{row.corpName}</strong><span>{row.stockCode}</span></td><td>{row.basis || "N/A"}</td><td>{row.completeness}/{row.requiredAccountCount}</td>{comparison.industryId === "construction" ? <td>{row.peerGroupSuggestion || "검토 필요"}</td> : null}<td><em className={`risk-badge ${row.riskLevel}`}>{row.riskLevel}</em></td>{definitions.map((definition) => <td key={definition.code}>{formatComparisonValue(row.metrics[definition.code], definition)}</td>)}</tr>)}</tbody></table> : <p className="comparison-empty">조건에 맞는 기업이 없습니다. 검색어나 신호 필터를 조정하세요.</p>}</div><ComparisonInspector comparison={comparison} detailData={detailData} isLoading={isDetailLoading} onOpenCompany={onOpenCompany} selectedRow={selectedRow} /></div></section>;
-}
-
-function DistributionBars({ definition, rows }) {
-  const values = rows.map((row) => row.metrics[definition.code]).filter((value) => value != null);
-  if (!values.length) return <p className="insight-empty">분포를 계산할 수 있는 값이 없습니다.</p>;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const step = (max - min || 1) / 4;
-  const buckets = Array.from({ length: 4 }, (_, index) => ({
-    label: `${(min + step * index).toFixed(1)}–${(min + step * (index + 1)).toFixed(1)}${definition.unit === "%" ? "%" : ""}`,
-    count: values.filter((value) => index === 3 ? value >= min + step * index : value >= min + step * index && value < min + step * (index + 1)).length,
-  }));
-  const peak = Math.max(...buckets.map((bucket) => bucket.count), 1);
-  return <div className="distribution-bars">{buckets.map((bucket) => <div key={bucket.label}><span>{bucket.label}</span><div><i style={{ width: `${(bucket.count / peak) * 100}%` }} /></div><strong>{bucket.count}</strong></div>)}</div>;
-}
-
-function IndustryInsightsBody({ comparison }) {
-  const isConstruction = comparison.industryId === "construction";
-  const signalCounts = comparison.rows.flatMap((row) => row.riskSignals).reduce((counts, signal) => ({ ...counts, [signal.label]: (counts[signal.label] || 0) + 1 }), {});
-  const segmentCounts = comparison.rows.reduce((counts, row) => {
-    const key = isConstruction ? row.peerGroupSuggestion || "검토 필요" : row.riskLevel;
-    counts[key] = (counts[key] || 0) + 1;
-    return counts;
-  }, {});
-  const distributionDefinition = comparison.metricDefinitions.find((definition) => isConstruction ? definition.code === "contract_asset_ratio" : definition.code === "inventory_ratio") || comparison.metricDefinitions[1] || comparison.metricDefinitions[0];
-  const topRows = [...comparison.rows].sort((left, right) => (right.metrics.revenue || 0) - (left.metrics.revenue || 0)).slice(0, 5);
-  return <div className="industry-insights"><p className="insights-context">{isConstruction ? "A/B/C 승인 전 전체 표본 기준의 탐색 분석입니다." : "연결(CFS) 우선 기준의 산업 비교 결과입니다."}</p><ComparisonKpiStrip comparison={comparison} /><div className="insights-grid"><section className="insight-card wide"><div><p className="eyebrow">핵심 비율 분포</p><h3>{distributionDefinition.label}</h3></div><DistributionBars definition={distributionDefinition} rows={comparison.rows} /><p>값 보유 기업을 4개 구간으로 나눈 탐색용 분포입니다.</p></section><section className="insight-card"><p className="eyebrow">{isConstruction ? "비교군 후보" : "위험 상태"}</p><h3>{isConstruction ? "검토용 그룹 구성" : "기업별 신호 상태"}</h3><div className="insight-list">{Object.entries(segmentCounts).map(([label, count]) => <div key={label}><span>{label}</span><strong>{count}개사</strong></div>)}</div></section><section className="insight-card"><p className="eyebrow">위험 신호 구성</p><h3>추가 확인이 필요한 테마</h3><div className="insight-list">{Object.keys(signalCounts).length ? Object.entries(signalCounts).sort((left, right) => right[1] - left[1]).map(([label, count]) => <div key={label}><span>{label}</span><strong>{count}건</strong></div>) : <p className="insight-empty">현재 규칙의 신호가 없습니다.</p>}</div></section><section className="insight-card wide"><p className="eyebrow">규모 기준 상위 기업</p><h3>매출액 상위 5개사</h3><div className="insight-company-list">{topRows.map((row) => <div key={row.corpCode}><span>{row.corpName}<em>{row.stockCode}</em></span><strong>{formatCompactNumber(row.metrics.revenue)}</strong><i className={`risk-badge ${row.riskLevel}`}>{row.riskLevel}</i></div>)}</div></section></div><footer className="insights-note">신호와 분포는 결론이 아니라 검토 우선순위입니다. 개별 기업의 원천 계정·산식·제한사항은 기업 목록과 상세 분석에서 확인하세요.</footer></div>;
-}
-
-function IndustryInsightsModal({ isOpen, initialIndustryId, onClose }) {
-  const [activeIndustryId, setActiveIndustryId] = useState(initialIndustryId);
-  const [year, setYear] = useState(2025);
-  const [comparison, setComparison] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (isOpen) {
-      setActiveIndustryId(initialIndustryId);
-    }
-  }, [isOpen, initialIndustryId]);
-
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    let cancelled = false;
-    setIsLoading(true);
-    setError("");
-    fetchIndustryComparison(activeIndustryId, year)
-      .then((data) => { if (!cancelled) setComparison(data); })
-      .catch((caught) => { if (!cancelled) { setComparison(null); setError(caught instanceof Error ? caught.message : "산업 분석 데이터를 불러오지 못했습니다."); } })
-      .finally(() => { if (!cancelled) setIsLoading(false); });
-    return () => { cancelled = true; };
-  }, [isOpen, activeIndustryId, year]);
-
-  if (!isOpen) {
-    return null;
-  }
-
-  const availableYears = industryComparisonYears[activeIndustryId] || [];
-
-  return (
-    <div className="modal-backdrop" onClick={onClose} role="presentation">
-      <section className="insights-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true">
-        <header className="insights-head">
-          <div>
-            <p className="eyebrow">산업 분석</p>
-            <h1>{industryLabels[activeIndustryId]} 리스크 인사이트</h1>
-          </div>
-          <div className="insights-head-actions">
-            {availableYears.length ? (
-              <label className="control-field">
-                <span>연도</span>
-                <select onChange={(event) => setYear(Number(event.target.value))} value={year}>
-                  {availableYears.map((option) => <option key={option} value={option}>{option}년</option>)}
-                </select>
-              </label>
-            ) : null}
-            <button className="close-button" onClick={onClose} type="button">닫기</button>
-          </div>
-        </header>
-        <div className="insights-tab-row">
-          {industryOptions.map((option) => (
-            <button
-              className={`tab-button ${activeIndustryId === option.id ? "active" : ""}`}
-              key={option.id}
-              onClick={() => setActiveIndustryId(option.id)}
-              type="button"
-            >
-              <span>{option.label}</span>
-            </button>
-          ))}
-        </div>
-        {isLoading ? <div className="loading-panel">산업 분석 데이터를 계산하는 중입니다.</div> : null}
-        {!isLoading && error ? <div className="status-banner error">{error}</div> : null}
-        {!isLoading && comparison ? <IndustryInsightsBody comparison={comparison} /> : null}
-      </section>
-    </div>
-  );
+  return <section className="comparison-section"><div className="comparison-head"><div><p className="eyebrow">전체 기업 · {comparison.year}</p><h2>{industryLabels[comparison.industryId] || comparison.industryId} 기업 목록</h2><p>{comparison.industryId === "construction" ? "A/B/C 분류 전 전체 표본을 보는 탐색용 비교입니다. 신호는 검토 우선순위이며, 정식 동종 벤치마크는 아닙니다." : "연결(CFS) 우선으로 수집하며, 값이 없을 경우 별도(OFS) 기준을 사용합니다."}</p></div></div><ComparisonControls activeIndustryId={activeIndustryId} availableYears={availableYears} onIndustryChange={onIndustryChange} onRiskFilterChange={setRiskFilter} onSearchChange={setSearchTerm} onYearChange={onYearChange} riskFilter={riskFilter} riskLevels={riskLevels} searchTerm={searchTerm} year={year} /><ComparisonKpiStrip comparison={comparison} rows={filteredRows} /><div className="comparison-workbench"><div className="comparison-table-wrap">{sortedRows.length ? <table className="comparison-table"><thead><tr><th>기업</th><th>기준</th><th>데이터</th>{comparison.industryId === "construction" ? <th>비교군 후보</th> : null}<th>검토 신호</th>{definitions.map((definition) => <th key={definition.code}><button onClick={() => selectSort(definition.code)} type="button">{definition.label} {sortCode === definition.code ? (sortDirection === "desc" ? "↓" : "↑") : "↕"}</button></th>)}</tr></thead><tbody>{sortedRows.map((row) => <tr className={selectedRow?.corpCode === row.corpCode ? "selected" : ""} key={row.corpCode} onClick={() => setSelectedRow(row)}><td><strong>{row.corpName}</strong><span>{row.stockCode}</span></td><td>{row.basis || "N/A"}</td><td>{row.completeness}/{row.requiredAccountCount}</td>{comparison.industryId === "construction" ? <td>{row.peerGroupSuggestion || "검토 필요"}</td> : null}<td><em className={`risk-badge ${row.riskLevel}`}>{row.riskLevel}</em></td>{definitions.map((definition) => <td key={definition.code}>{formatComparisonValue(row.metrics[definition.code], definition)}</td>)}</tr>)}</tbody></table> : <p className="comparison-empty">조건에 맞는 기업이 없습니다. 검색어나 신호 필터를 조정하세요.</p>}</div><ComparisonInspector comparison={comparison} detailData={detailData} isLoading={isDetailLoading} onOpenCompany={onOpenCompany} selectedRow={selectedRow} /></div></section>;
 }
 
 function IndustryPickerModal({ profile, onSelect, onClose }) {
@@ -999,7 +901,6 @@ function App() {
   const [tableComparison, setTableComparison] = useState(null);
   const [isTableLoading, setIsTableLoading] = useState(false);
   const [tableError, setTableError] = useState("");
-  const [isInsightsModalOpen, setIsInsightsModalOpen] = useState(false);
 
   function replaceLocation(path) {
     window.history.pushState({}, "", path);
@@ -1263,14 +1164,6 @@ function App() {
           <strong>Audit Risk<br />Intelligence</strong>
           <p>산업별 재무 리스크 분석</p>
         </div>
-        <button
-          className="side-link"
-          onClick={() => setIsInsightsModalOpen(true)}
-          type="button"
-        >
-          <span>산업 분석</span>
-          <em>산업별 분포·신호 요약</em>
-        </button>
       </aside>
 
       <div className="workspace-shell">
@@ -1339,7 +1232,6 @@ function App() {
               comparison={tableComparison}
               onIndustryChange={setTableIndustryId}
               onOpenCompany={(row) => openCompanyProfileFromSuggestion({ companyId: row.corpCode, companyName: row.corpName })}
-              onOpenInsights={() => setIsInsightsModalOpen(true)}
               onYearChange={setTableYear}
               year={tableYear}
             />
@@ -1351,12 +1243,6 @@ function App() {
         onClose={() => setPendingProfile(null)}
         onSelect={handleIndustrySelect}
         profile={pendingProfile}
-      />
-
-      <IndustryInsightsModal
-        initialIndustryId={tableIndustryId}
-        isOpen={isInsightsModalOpen}
-        onClose={() => setIsInsightsModalOpen(false)}
       />
 
     </div>
