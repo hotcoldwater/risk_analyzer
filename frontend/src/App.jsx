@@ -5,6 +5,7 @@ import {
   fetchCompanyProfile,
   fetchCompanySearch,
   fetchIndustryComparison,
+  fetchIndustryCompanyComparison,
   fetchIndustries,
   fetchLiquidityMetric,
   fetchResolvedCompany,
@@ -237,9 +238,10 @@ function formatComparisonValue(value, definition) {
   return `${value.toFixed(2)}배`;
 }
 
-function IndustryComparisonTable({ comparison, onClose }) {
+function IndustryComparisonTable({ comparison, onClose, onOpenCompany }) {
   const [sortCode, setSortCode] = useState("revenue");
   const [sortDirection, setSortDirection] = useState("desc");
+  const [selectedRow, setSelectedRow] = useState(null);
   const definitions = comparison.metricDefinitions;
   const sortedRows = [...comparison.rows].sort((left, right) => {
     const leftValue = left.metrics[sortCode] ?? Number.NEGATIVE_INFINITY;
@@ -261,8 +263,8 @@ function IndustryComparisonTable({ comparison, onClose }) {
       <div className="comparison-head">
         <div>
           <p className="eyebrow">산업 비교 · {comparison.year}</p>
-          <h2>반도체 기업 비교</h2>
-          <p>연결(CFS) 우선으로 수집하며, 값이 없을 경우 별도(OFS) 기준을 사용합니다.</p>
+          <h2>{industryLabels[comparison.industryId] || comparison.industryId} 기업 비교</h2>
+          <p>{comparison.industryId === "construction" ? "A/B/C 분류 전 65개사 전체를 보는 탐색용 비교입니다. 신호는 전체 분포와 영업현금흐름 음수 기준의 검토 우선순위이며, 정식 동종 벤치마크는 아닙니다." : "연결(CFS) 우선으로 수집하며, 값이 없을 경우 별도(OFS) 기준을 사용합니다."}</p>
         </div>
         <button className="ghost-button" onClick={onClose} type="button">산업 목록으로</button>
       </div>
@@ -273,6 +275,8 @@ function IndustryComparisonTable({ comparison, onClose }) {
               <th>기업</th>
               <th>기준</th>
               <th>데이터</th>
+              {comparison.industryId === "construction" ? <th>비교군 후보</th> : null}
+              <th>검토 신호</th>
               {definitions.map((definition) => (
                 <th key={definition.code}>
                   <button onClick={() => selectSort(definition.code)} type="button">
@@ -284,27 +288,42 @@ function IndustryComparisonTable({ comparison, onClose }) {
           </thead>
           <tbody>
             {sortedRows.map((row) => (
-              <tr key={row.corpCode}>
+              <tr key={row.corpCode} onClick={() => setSelectedRow(row)}>
                 <td><strong>{row.corpName}</strong><span>{row.stockCode}</span></td>
                 <td>{row.basis || "N/A"}</td>
                 <td>{row.completeness}/{row.requiredAccountCount}</td>
+                {comparison.industryId === "construction" ? <td>{row.peerGroupSuggestion || "검토 필요"}</td> : null}
+                <td><em className={`risk-badge ${row.riskLevel}`}>{row.riskLevel}</em></td>
                 {definitions.map((definition) => <td key={definition.code}>{formatComparisonValue(row.metrics[definition.code], definition)}</td>)}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {selectedRow ? (
+        <section className="comparison-detail">
+            <div className="comparison-detail-head">
+              <div><p className="eyebrow">선택 기업 검토</p><h3>{selectedRow.corpName}</h3></div>
+            <div className="comparison-detail-actions">{["semiconductor", "construction"].includes(comparison.industryId) ? <button className="ghost-button" onClick={() => onOpenCompany(selectedRow)} type="button">기업 상세 열기</button> : null}<button className="ghost-button" onClick={() => setSelectedRow(null)} type="button">닫기</button></div>
+          </div>
+          {selectedRow.riskSignals.length ? (
+            <div className="comparison-signal-list">
+              {selectedRow.riskSignals.map((signal) => <article key={signal.code}><strong>{signal.label}</strong><span>{signal.severity}</span><p>{signal.summary}</p></article>)}
+            </div>
+          ) : <p className="comparison-empty">{comparison.industryId === "construction" ? `${selectedRow.peerGroupRationale || "비교군 후보를 검토하세요."} 현재 전체 표본 기준의 검토 신호는 없습니다. 정식 건설 위험 규칙과 A/B/C 비교그룹은 승인 전입니다.` : "현재 설정한 재고·CAPEX·현금흐름 신호는 확인되지 않았습니다. 이는 정상 또는 안전을 단정하지 않으며, 상세 계정 검토가 필요합니다."}</p>}
+        </section>
+      ) : null}
     </section>
   );
 }
 
-function IndustryLanding({ industries, isLoading, onSelectCompanyAnalysis }) {
+function IndustryLanding({ industries, isLoading, onSelectCompanyAnalysis, onOpenCompany }) {
   const [comparison, setComparison] = useState(null);
   const [isComparisonLoading, setIsComparisonLoading] = useState(false);
   const [comparisonError, setComparisonError] = useState("");
 
   async function openComparison(industryId) {
-    if (industryId !== "semiconductor") {
+    if (!["semiconductor", "construction"].includes(industryId)) {
       setComparisonError("이 산업의 비교 테이블은 준비 중입니다. 현재는 기업 수와 데이터 준비 상태만 확인할 수 있습니다.");
       return;
     }
@@ -324,11 +343,11 @@ function IndustryLanding({ industries, isLoading, onSelectCompanyAnalysis }) {
   }
 
   if (isComparisonLoading) {
-    return <div className="loading-panel">반도체 기업 비교를 계산하는 중입니다.</div>;
+    return <div className="loading-panel">산업 기업 비교를 계산하는 중입니다.</div>;
   }
 
   if (comparison) {
-    return <IndustryComparisonTable comparison={comparison} onClose={() => setComparison(null)} />;
+    return <IndustryComparisonTable comparison={comparison} onClose={() => setComparison(null)} onOpenCompany={onOpenCompany} />;
   }
 
   return (
@@ -343,11 +362,12 @@ function IndustryLanding({ industries, isLoading, onSelectCompanyAnalysis }) {
       <div className="industry-card-grid">
         {industries.map((industry) => {
           const ready = industry.analysisStatus === "ready";
+          const preview = industry.analysisStatus === "preview";
           return (
             <article className="industry-card" key={industry.industryId}>
               <div className="industry-card-top">
                 <span>{industryLabels[industry.industryId] || industry.industryId.toUpperCase()}</span>
-                <em className={ready ? "ready" : "prepared"}>{ready ? "분석 가능" : "데이터 준비"}</em>
+                <em className={ready ? "ready" : "prepared"}>{ready ? "분석 가능" : preview ? "탐색 비교" : "데이터 준비"}</em>
               </div>
               <strong>{industry.companyCount}개 기업</strong>
               <p>
@@ -355,7 +375,7 @@ function IndustryLanding({ industries, isLoading, onSelectCompanyAnalysis }) {
               </p>
               {ready ? <div className="industry-themes">{industry.availableThemes.map((theme) => <span key={theme}>{theme}</span>)}</div> : null}
               <button className="ghost-button" onClick={() => ready ? onSelectCompanyAnalysis() : openComparison(industry.industryId)} type="button">
-                {ready ? "기업 분석으로 이동" : industry.industryId === "semiconductor" ? "기업 비교 보기" : "준비 상태 보기"}
+                {ready ? "기업 분석으로 이동" : industry.industryId === "semiconductor" ? "기업 비교 보기" : preview ? "탐색 비교 보기" : "준비 상태 보기"}
               </button>
             </article>
           );
@@ -685,6 +705,15 @@ function AnalysisGuide({ groupScope, metricData, primaryGroup }) {
   );
 }
 
+function SemiconductorPanel({ data, industryId = "semiconductor", isLoading }) {
+  const isConstruction = industryId === "construction";
+  const industryLabel = industryLabels[industryId] || industryId;
+  if (isLoading) return <div className="loading-panel">{industryLabel} 위험 신호를 불러오는 중입니다.</div>;
+  if (!data) return null;
+  const accounts = isConstruction ? ["매출액", "계약자산(미청구공사)", "매출채권", "차입금", "충당부채", "영업활동현금흐름"] : ["매출액", "재고자산", "유형자산의 취득", "영업활동현금흐름"];
+  return <div className="analysis-panel"><div className="panel-toolbar"><div><p className="eyebrow">{industryLabel} 리스크 개요</p><h4>{data.row.riskLevel} · 2025년</h4></div><span>{data.row.basis || "기준 없음"} · 계정 {data.row.completeness}/{data.row.requiredAccountCount}</span></div><div className="indicator-grid">{data.metricDefinitions.map((definition) => <article className="indicator-card" key={definition.code}><span>{definition.label}</span><strong>{formatComparisonValue(data.row.metrics[definition.code], definition)}</strong><em>{isConstruction ? "전체 표본 초기 기준" : "산업 비교 기준"}</em></article>)}</div><div className="signal-stack">{data.row.riskSignals.length ? data.row.riskSignals.map((signal) => <article className="signal-card triggered" key={signal.code}><div className="signal-head"><strong>{signal.label}</strong><span>{signal.severity}</span></div><p>{signal.summary}</p></article>) : <div className="status-banner warning">현재 규칙의 검토 신호는 없습니다. 상세 계정과 사업 맥락을 함께 확인하세요.</div>}</div><section className="account-series"><div><p className="eyebrow">원천 계정 3개년</p><h5>{isConstruction ? "계약자산·채권·차입금·현금흐름의 방향을 확인하세요." : "재고·투자·현금흐름의 방향을 확인하세요."}</h5></div><div className="account-series-table"><div className="series-head"><span>계정</span>{data.accountSeries.map((point) => <span key={point.year}>{point.year} · {point.basis || "N/A"}</span>)}</div>{accounts.map((account) => <div className="series-line" key={account}><strong>{account}</strong>{data.accountSeries.map((point) => <span key={point.year}>{formatCompactNumber(point.values[account])}</span>)}</div>)}</div></section><section className="audit-questions"><p className="eyebrow">근거 메타데이터와 감사 확인 질문</p><p className="source-status">현재 재무 계정·비교 산식은 연결되어 있습니다. 원문 DART 공시 링크는 접수번호 데이터가 적재되면 연결됩니다.</p>{data.auditQuestions.map((question) => <p key={question}>{question}</p>)}<em>{data.limitations}</em></section></div>;
+}
+
 function ReviewDesk({ profile, selectedIndustryId, activeTab, metricData }) {
   const storageKey = `ari:review-note:${profile.company.corp_code}:${selectedIndustryId}:${activeTab}`;
   const [note, setNote] = useState("");
@@ -750,6 +779,10 @@ function AnalysisWorkspace({
   isMetricLoading,
   isAnomalyLoading,
   showDetails,
+  semiconductorData,
+  isSemiconductorLoading,
+  constructionData,
+  isConstructionLoading,
   onToggleDetails,
 }) {
   if (!profile) {
@@ -781,7 +814,7 @@ function AnalysisWorkspace({
 
       <AnalysisGuide groupScope={groupScope} metricData={metricData} primaryGroup={primaryGroup} />
 
-      {isDefenseWorkspace ? (
+      {isDefenseWorkspace || ["semiconductor", "construction"].includes(selectedIndustryId) ? (
         <ReviewDesk
           activeTab={activeTab || "overview"}
           metricData={metricData}
@@ -804,7 +837,9 @@ function AnalysisWorkspace({
           ))}
         </div> : null}
 
-        {!isDefenseWorkspace ? (
+        {selectedIndustryId === "semiconductor" ? <SemiconductorPanel data={semiconductorData} isLoading={isSemiconductorLoading} /> : null}
+        {selectedIndustryId === "construction" ? <SemiconductorPanel data={constructionData} industryId="construction" isLoading={isConstructionLoading} /> : null}
+        {!isDefenseWorkspace && !["semiconductor", "construction"].includes(selectedIndustryId) ? (
           <div className="coming-soon-panel">
             <strong>{selectedIndustryId?.toUpperCase() || "산업"} 분석 준비 중</strong>
             <span>기업·산업 컨텍스트는 열렸습니다. 비교군 정책과 산업별 위험 규칙이 완료되면 이 워크스페이스에 연결됩니다.</span>
@@ -864,6 +899,10 @@ function App() {
   const [showDetails, setShowDetails] = useState(false);
   const [industries, setIndustries] = useState([]);
   const [isIndustriesLoading, setIsIndustriesLoading] = useState(false);
+  const [semiconductorData, setSemiconductorData] = useState(null);
+  const [isSemiconductorLoading, setIsSemiconductorLoading] = useState(false);
+  const [constructionData, setConstructionData] = useState(null);
+  const [isConstructionLoading, setIsConstructionLoading] = useState(false);
 
   function replaceLocation(path) {
     window.history.pushState({}, "", path);
@@ -878,6 +917,8 @@ function App() {
     setSelectedMetric("revenue_growth");
     setMetricData(null);
     setAnomalyData(null);
+    setSemiconductorData(null);
+    setConstructionData(null);
     setShowDetails(false);
     replaceLocation(`/companies/${encodeURIComponent(data.company.corp_code)}?industry=${encodeURIComponent(industryId || "")}`);
   }
@@ -1033,6 +1074,22 @@ function App() {
     };
   }, [activeTab, groupScope, profile, selectedIndustryId]);
 
+  useEffect(() => {
+    if (!profile || selectedIndustryId !== "semiconductor") return;
+    let cancelled = false;
+    setIsSemiconductorLoading(true);
+    fetchIndustryCompanyComparison("semiconductor", profile.company.corp_code).then((data) => { if (!cancelled) setSemiconductorData(data); }).catch((caught) => { if (!cancelled) setError(caught instanceof Error ? caught.message : "반도체 분석을 불러오지 못했습니다."); }).finally(() => { if (!cancelled) setIsSemiconductorLoading(false); });
+    return () => { cancelled = true; };
+  }, [profile, selectedIndustryId]);
+
+  useEffect(() => {
+    if (!profile || selectedIndustryId !== "construction") return;
+    let cancelled = false;
+    setIsConstructionLoading(true);
+    fetchIndustryCompanyComparison("construction", profile.company.corp_code).then((data) => { if (!cancelled) setConstructionData(data); }).catch((caught) => { if (!cancelled) setError(caught instanceof Error ? caught.message : "건설 분석을 불러오지 못했습니다."); }).finally(() => { if (!cancelled) setIsConstructionLoading(false); });
+    return () => { cancelled = true; };
+  }, [profile, selectedIndustryId]);
+
   async function openCompanyProfileFromSuggestion(item) {
     setError("");
     setIsResolving(true);
@@ -1089,6 +1146,7 @@ function App() {
     setActiveTab(null);
     setMetricData(null);
     setAnomalyData(null);
+    setSemiconductorData(null);
     setShowDetails(false);
     replaceLocation("/");
   }
@@ -1177,7 +1235,11 @@ function App() {
                   profile={profile}
                   selectedIndustryId={selectedIndustryId}
                   selectedMetric={selectedMetric}
+                  semiconductorData={semiconductorData}
+                  constructionData={constructionData}
                   showDetails={showDetails}
+                  isSemiconductorLoading={isSemiconductorLoading}
+                  isConstructionLoading={isConstructionLoading}
                 />
               ) : (
                 <div className="workspace-empty-state">
@@ -1197,6 +1259,7 @@ function App() {
               industries={industries}
               isLoading={isIndustriesLoading}
               onSelectCompanyAnalysis={() => setViewMode("stock")}
+              onOpenCompany={(row) => openCompanyProfileFromSuggestion({ companyId: row.corpCode, companyName: row.corpName })}
             />
           )}
         </main>

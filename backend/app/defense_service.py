@@ -222,13 +222,14 @@ def get_industry_summaries(database_url: str) -> list[dict[str, Any]]:
     for row in rows:
         industry_id = row["industry_id"]
         is_ready = industry_id == "defense"
+        is_preview = industry_id == "construction"
         summaries.append(
             {
                 "industryId": industry_id,
                 "companyCount": row["company_count"],
                 "classifiedCompanyCount": row["classified_company_count"],
                 "updatedAt": row["updated_at"].isoformat() if row["updated_at"] else None,
-                "analysisStatus": "ready" if is_ready else "prepared",
+                "analysisStatus": "ready" if is_ready else "preview" if is_preview else "prepared",
                 "availableThemes": ["현금화·수익인식", "이상징후"] if is_ready else [],
             }
         )
@@ -237,7 +238,10 @@ def get_industry_summaries(database_url: str) -> list[dict[str, Any]]:
 
 INDUSTRY_COMPARISON_ACCOUNTS = {
     "semiconductor": ["매출액", "영업이익", "당기순이익", "영업활동현금흐름", "재고자산", "유형자산의 취득"],
-    "construction": ["매출액", "영업이익", "당기순이익", "영업활동현금흐름", "재고자산", "매출채권", "차입금", "충당부채"],
+    "construction": [
+        "매출액", "영업이익", "당기순이익", "영업활동현금흐름", "계약자산(미청구공사)",
+        "매출채권", "차입금", "충당부채", "자산총계",
+    ],
     "defense": TARGET_ACCOUNTS,
 }
 
@@ -255,6 +259,15 @@ def _industry_metric_definitions(industry_id: str) -> list[dict[str, str]]:
             {"code": "capex_ratio", "label": "CAPEX/매출", "unit": "%"},
             {"code": "cfo_conversion", "label": "영업현금흐름 전환율", "unit": "배"},
         ]
+    if industry_id == "construction":
+        return [
+            {"code": "revenue", "label": "매출액", "unit": "KRW"},
+            {"code": "operating_margin", "label": "영업이익률", "unit": "%"},
+            {"code": "contract_asset_ratio", "label": "계약자산/매출", "unit": "%"},
+            {"code": "receivable_ratio", "label": "매출채권/매출", "unit": "%"},
+            {"code": "debt_to_assets", "label": "차입금/자산", "unit": "%"},
+            {"code": "cfo_to_revenue", "label": "영업현금흐름/매출", "unit": "%"},
+        ]
     return [
         {"code": "revenue", "label": "매출액", "unit": "KRW"},
         {"code": "operating_margin", "label": "영업이익률", "unit": "%"},
@@ -262,20 +275,41 @@ def _industry_metric_definitions(industry_id: str) -> list[dict[str, str]]:
     ]
 
 
-def _comparison_metrics(values: dict[str, float | None]) -> dict[str, float | None]:
+def _comparison_metrics(values: dict[str, float | None], industry_id: str) -> dict[str, float | None]:
     revenue = values.get("매출액")
     operating_income = values.get("영업이익")
     net_income = values.get("당기순이익")
     cfo = values.get("영업활동현금흐름")
     inventory = values.get("재고자산")
     capex = values.get("유형자산의 취득")
-    return {
+    metrics = {
         "revenue": revenue,
         "operating_margin": _safe_div(operating_income, revenue, 100),
         "inventory_ratio": _safe_div(inventory, revenue, 100),
         "capex_ratio": _safe_div(capex, revenue, 100),
         "cfo_conversion": _safe_div(cfo, net_income),
     }
+    if industry_id == "construction":
+        metrics.update(
+            {
+                "contract_asset_ratio": _safe_div(values.get("계약자산(미청구공사)"), revenue, 100),
+                "receivable_ratio": _safe_div(values.get("매출채권"), revenue, 100),
+                "debt_to_assets": _safe_div(values.get("차입금"), values.get("자산총계"), 100),
+                "cfo_to_revenue": _safe_div(cfo, revenue, 100),
+            }
+        )
+    return metrics
+
+
+def _construction_group_candidate(classification: str | None, revenue_recognition_code: str | None) -> tuple[str, str]:
+    """Return a review candidate only; official industry_map levels stay untouched."""
+    category = classification or "미분류"
+    recognition = revenue_recognition_code or "수익인식 코드 미기재"
+    if any(token in category for token in ("비건설", "개발", "분양")):
+        return "C 후보", f"{category} 분류 및 {recognition} 수익인식 구성을 개발·혼합형 후보로 검토합니다."
+    if any(token in category for token in ("종합건설", "EPC", "플랜트", "건축·토목", "수처리", "클린룸")):
+        return "A 후보", f"{category} 분류 및 {recognition} 수익인식 구성을 프로젝트형 종합 비교군 후보로 검토합니다."
+    return "B 후보", f"{category} 분류 및 {recognition} 수익인식 구성을 전문·서비스형 비교군 후보로 검토합니다."
 
 
 def get_industry_comparison(database_url: str, industry_id: str, year: int = CURRENT_YEAR) -> dict[str, Any]:
@@ -287,8 +321,11 @@ def get_industry_comparison(database_url: str, industry_id: str, year: int = CUR
         cursor.execute(
             sql.SQL(
                 """
-                SELECT m.corp_code, m.stock_code, m.corp_name, m.level, f.fs_div, f.account_name, f.amount
+                SELECT m.corp_code, m.stock_code, m.corp_name, m.level,
+                       c.classification, c.revenue_recognition_code,
+                       f.fs_div, f.account_name, f.amount
                 FROM public.industry_map AS m
+                LEFT JOIN public.companies_basic AS c ON c.corp_code = m.corp_code
                 LEFT JOIN public.{} AS f
                   ON f.corp_code = m.corp_code
                  AND f.year = %(year)s
@@ -312,6 +349,8 @@ def get_industry_comparison(database_url: str, industry_id: str, year: int = CUR
                 "stockCode": record["stock_code"],
                 "corpName": record["corp_name"],
                 "level": record["level"],
+                "classification": record["classification"],
+                "revenueRecognitionCode": record["revenue_recognition_code"],
             },
         )
         if record["account_name"] is None:
@@ -329,21 +368,192 @@ def get_industry_comparison(database_url: str, industry_id: str, year: int = CUR
         basis = next((entry[2] for entry in entries.values() if entry[2] == "CFS"), None) or next(
             (entry[2] for entry in entries.values() if entry[2]), None
         )
-        rows.append(
-            {
-                **company,
-                "basis": basis,
-                "completeness": sum(value is not None for value in values.values()),
-                "requiredAccountCount": len(accounts),
-                "metrics": _comparison_metrics(values),
-            }
-        )
+        row = {
+            **company,
+            "basis": basis,
+            "completeness": sum(value is not None for value in values.values()),
+            "requiredAccountCount": len(accounts),
+            "metrics": _comparison_metrics(values, industry_id),
+        }
+        if industry_id == "construction":
+            candidate, rationale = _construction_group_candidate(
+                company["classification"], company["revenueRecognitionCode"]
+            )
+            row["peerGroupSuggestion"] = candidate
+            row["peerGroupRationale"] = rationale
+        rows.append(row)
+
+    inventory_threshold = _percentile(
+        sorted(row["metrics"]["inventory_ratio"] for row in rows if row["metrics"].get("inventory_ratio") is not None), 0.75
+    )
+    capex_threshold = _percentile(
+        sorted(row["metrics"]["capex_ratio"] for row in rows if row["metrics"].get("capex_ratio") is not None), 0.75
+    )
+    if industry_id == "semiconductor":
+        for row in rows:
+            metrics = row["metrics"]
+            signals = []
+            inventory_ratio = metrics.get("inventory_ratio")
+            capex_ratio = metrics.get("capex_ratio")
+            cfo_conversion = metrics.get("cfo_conversion")
+            if inventory_threshold is not None and inventory_ratio is not None and inventory_ratio >= inventory_threshold:
+                signals.append({
+                    "code": "inventory_high",
+                    "label": "재고 부담 상위 구간",
+                    "severity": "주의",
+                    "summary": f"재고/매출 {inventory_ratio:.1f}%가 산업 3사분위 {inventory_threshold:.1f}% 이상입니다.",
+                })
+            if capex_threshold is not None and capex_ratio is not None and capex_ratio >= capex_threshold:
+                signals.append({
+                    "code": "capex_high",
+                    "label": "CAPEX 부담 상위 구간",
+                    "severity": "주의",
+                    "summary": f"CAPEX/매출 {capex_ratio:.1f}%가 산업 3사분위 {capex_threshold:.1f}% 이상입니다.",
+                })
+            if cfo_conversion is not None and cfo_conversion < 0.5:
+                signals.append({
+                    "code": "cfo_low",
+                    "label": "현금흐름 전환 저하",
+                    "severity": "위험",
+                    "summary": f"영업현금흐름 전환율이 {cfo_conversion:.2f}배로 0.5배 미만입니다.",
+                })
+            row["riskSignals"] = signals
+            row["riskLevel"] = "위험" if any(signal["severity"] == "위험" for signal in signals) else "주의" if signals else "정상"
+    elif industry_id == "construction":
+        construction_thresholds = {
+            "contract_asset_ratio": _percentile(
+                sorted(row["metrics"]["contract_asset_ratio"] for row in rows if row["metrics"].get("contract_asset_ratio") is not None),
+                0.75,
+            ),
+            "receivable_ratio": _percentile(
+                sorted(row["metrics"]["receivable_ratio"] for row in rows if row["metrics"].get("receivable_ratio") is not None),
+                0.75,
+            ),
+            "debt_to_assets": _percentile(
+                sorted(row["metrics"]["debt_to_assets"] for row in rows if row["metrics"].get("debt_to_assets") is not None),
+                0.75,
+            ),
+        }
+        sample_sizes = {
+            metric_code: sum(row["metrics"].get(metric_code) is not None for row in rows)
+            for metric_code in construction_thresholds
+        }
+        for row in rows:
+            metrics = row["metrics"]
+            signals = []
+            for metric_code, label in (
+                ("contract_asset_ratio", "계약자산 부담 상위 구간"),
+                ("receivable_ratio", "매출채권 부담 상위 구간"),
+                ("debt_to_assets", "차입금 의존도 상위 구간"),
+            ):
+                value = metrics.get(metric_code)
+                threshold = construction_thresholds[metric_code]
+                if threshold is not None and value is not None and value >= threshold:
+                    signals.append(
+                        {
+                            "code": f"{metric_code}_high",
+                            "label": label,
+                            "severity": "주의",
+                            "summary": f"{value:.1f}%가 전체 표본 {sample_sizes[metric_code]}개사의 3사분위 {threshold:.1f}% 이상입니다.",
+                        }
+                    )
+            cfo_to_revenue = metrics.get("cfo_to_revenue")
+            if cfo_to_revenue is not None and cfo_to_revenue < 0:
+                signals.append(
+                    {
+                        "code": "cfo_negative",
+                        "label": "영업현금흐름 음수",
+                        "severity": "위험",
+                        "summary": f"영업현금흐름/매출이 {cfo_to_revenue:.1f}%로 음수입니다.",
+                    }
+                )
+            row["riskSignals"] = signals
+            row["riskLevel"] = "위험" if any(signal["severity"] == "위험" for signal in signals) else "주의" if signals else "정상"
+    else:
+        for row in rows:
+            row["riskSignals"] = []
+            row["riskLevel"] = "판단 전"
 
     return {
         "industryId": industry_id,
         "year": year,
         "metricDefinitions": _industry_metric_definitions(industry_id),
         "rows": rows,
+    }
+
+
+def get_industry_company_comparison(
+    database_url: str,
+    industry_id: str,
+    corp_code: str,
+    year: int = CURRENT_YEAR,
+) -> dict[str, Any]:
+    comparison = get_industry_comparison(database_url, industry_id, year)
+    row = next((item for item in comparison["rows"] if item["corpCode"] == corp_code), None)
+    if row is None:
+        raise LookupError("해당 산업의 분석 대상 기업이 아닙니다.")
+    accounts = INDUSTRY_COMPARISON_ACCOUNTS[industry_id]
+    with _connect(database_url) as connection, connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL(
+                """
+                SELECT year, fs_div, account_name, amount
+                FROM public.{}
+                WHERE corp_code = %(corp_code)s
+                  AND year BETWEEN %(start_year)s AND %(year)s
+                  AND account_name = ANY(%(accounts)s)
+                ORDER BY year, account_name
+                """
+            ).format(sql.Identifier(industry_id)),
+            {"corp_code": corp_code, "start_year": year - 2, "year": year, "accounts": accounts},
+        )
+        financial_rows = cursor.fetchall()
+
+    series_index: dict[int, dict[str, tuple[int, Any, str | None]]] = {}
+    for financial_row in financial_rows:
+        entries = series_index.setdefault(financial_row["year"], {})
+        priority = _basis_priority(financial_row["fs_div"])
+        previous = entries.get(financial_row["account_name"])
+        if previous is None or priority < previous[0]:
+            entries[financial_row["account_name"]] = (priority, financial_row["amount"], financial_row["fs_div"])
+    account_series = [
+        {
+            "year": item_year,
+            "basis": next((entry[2] for entry in entries.values() if entry[2] == "CFS"), None) or next(
+                (entry[2] for entry in entries.values() if entry[2]), None
+            ),
+            "values": {account: entries.get(account, (99, None, None))[1] for account in accounts},
+        }
+        for item_year, entries in sorted(series_index.items())
+    ]
+    questions_by_signal = {
+        "inventory_high": "재고 증가가 고객 수요·생산계획·평가충당금 정책과 일관되는지 확인하세요.",
+        "capex_high": "CAPEX 증가분의 투자 승인, 가동 계획, 손상·감가상각 가정을 확인하세요.",
+        "cfo_low": "이익과 영업현금흐름의 차이가 매출채권·재고·선급금 변화로 설명되는지 확인하세요.",
+        "contract_asset_ratio_high": "계약자산 증가가 공정률·기성 청구·발주처 승인 일정과 일관되는지 확인하세요.",
+        "receivable_ratio_high": "매출채권의 회수기일, 연체·분쟁 여부와 대손충당금 정책을 확인하세요.",
+        "debt_to_assets_high": "차입 증가의 PF·운전자금·만기 구조와 약정 준수 여부를 확인하세요.",
+        "cfo_negative": "영업현금흐름 음수의 원인이 미청구공사·채권 회수·선급금·프로젝트 원가 변화로 설명되는지 확인하세요.",
+    }
+    audit_questions = [questions_by_signal[signal["code"]] for signal in row["riskSignals"]]
+    if not audit_questions:
+        audit_questions = [
+            "위험 신호가 없더라도 계약자산·매출채권·차입금·영업현금흐름의 연도별 방향성과 사업 설명의 일관성을 확인하세요."
+            if industry_id == "construction"
+            else "위험 신호가 없더라도 재고·CAPEX·현금흐름의 연도별 방향성과 사업 설명의 일관성을 확인하세요."
+        ]
+    return {
+        "industryId": comparison["industryId"],
+        "year": comparison["year"],
+        "metricDefinitions": comparison["metricDefinitions"],
+        "row": row,
+        "accountSeries": account_series,
+        "auditQuestions": audit_questions,
+        "limitations": (
+            "연결(CFS) 값을 우선 사용하고 값이 없을 때 별도(OFS) 값을 사용합니다. 건설 신호는 A/B/C 승인 전 전체 65개사 분포의 3사분위와 영업현금흐름 음수를 사용한 추가 검토 우선순위이며 결론이 아닙니다."
+            if industry_id == "construction"
+            else "연결(CFS) 값을 우선 사용하고 값이 없을 때 별도(OFS) 값을 사용합니다. 산업 3사분위와 0.5배 기준은 추가 검토 우선순위이며 결론이 아닙니다."
+        ),
     }
 
 

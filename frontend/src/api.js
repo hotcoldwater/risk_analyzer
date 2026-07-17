@@ -56,6 +56,13 @@ export function fetchIndustryComparison(industryId, year = 2025) {
   );
 }
 
+export function fetchIndustryCompanyComparison(industryId, corpCode, year = 2025) {
+  return fetchJson(
+    `/api/industries/${encodeURIComponent(industryId)}/companies/${encodeURIComponent(corpCode)}/comparison?year=${encodeURIComponent(year)}`,
+    "기업의 산업 분석 데이터를 불러오지 못했습니다.",
+  );
+}
+
 export function fetchResolvedCompany(query) {
   return fetchJson(
     `/api/company-resolve?query=${encodeURIComponent(query)}`,
