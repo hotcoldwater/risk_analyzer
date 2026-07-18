@@ -236,14 +236,31 @@ def get_industry_summaries(database_url: str) -> list[dict[str, Any]]:
     return summaries
 
 
+# Common set behind the "기본 재무비율 분석" (basic ratio analysis) columns, extracted
+# from DART for all 3 industries on 2026-07-18. See README "표준 재무비율 계정 세트".
+STANDARD_RATIO_ACCOUNTS = [
+    "매출액", "매출원가", "매출총이익", "영업이익", "당기순이익", "영업활동현금흐름",
+    "자산총계", "부채총계", "자본총계", "유동자산", "유동부채", "재고자산", "매출채권",
+]
+
 INDUSTRY_COMPARISON_ACCOUNTS = {
-    "semiconductor": ["매출액", "영업이익", "당기순이익", "영업활동현금흐름", "재고자산", "유형자산의 취득"],
+    "semiconductor": [*STANDARD_RATIO_ACCOUNTS, "유형자산의 취득"],
     "construction": [
-        "매출액", "영업이익", "당기순이익", "영업활동현금흐름", "계약자산(미청구공사)",
-        "매출채권", "차입금", "충당부채", "자산총계",
+        *STANDARD_RATIO_ACCOUNTS, "계약자산(미청구공사)", "차입금", "충당부채",
     ],
-    "defense": TARGET_ACCOUNTS,
+    "defense": [*STANDARD_RATIO_ACCOUNTS, "계약자산", "계약부채"],
 }
+
+COMMON_RATIO_DEFINITIONS = [
+    {"code": "revenue", "label": "매출액", "unit": "KRW"},
+    {"code": "operating_margin", "label": "영업이익률", "unit": "%"},
+    {"code": "gross_margin", "label": "매출총이익률", "unit": "%"},
+    {"code": "net_margin", "label": "순이익률", "unit": "%"},
+    {"code": "debt_ratio", "label": "부채비율", "unit": "%"},
+    {"code": "current_ratio", "label": "유동비율", "unit": "%"},
+    {"code": "asset_turnover", "label": "총자산회전율", "unit": "배"},
+    {"code": "roe", "label": "ROE", "unit": "%"},
+]
 
 
 def _basis_priority(fs_div: str | None) -> int:
@@ -251,43 +268,52 @@ def _basis_priority(fs_div: str | None) -> int:
 
 
 def _industry_metric_definitions(industry_id: str) -> list[dict[str, str]]:
+    industry_extras: list[dict[str, str]] = []
     if industry_id == "semiconductor":
-        return [
-            {"code": "revenue", "label": "매출액", "unit": "KRW"},
-            {"code": "operating_margin", "label": "영업이익률", "unit": "%"},
+        industry_extras = [
             {"code": "inventory_ratio", "label": "재고/매출", "unit": "%"},
             {"code": "capex_ratio", "label": "CAPEX/매출", "unit": "%"},
             {"code": "cfo_conversion", "label": "영업현금흐름 전환율", "unit": "배"},
         ]
-    if industry_id == "construction":
-        return [
-            {"code": "revenue", "label": "매출액", "unit": "KRW"},
-            {"code": "operating_margin", "label": "영업이익률", "unit": "%"},
+    elif industry_id == "construction":
+        industry_extras = [
             {"code": "contract_asset_ratio", "label": "계약자산/매출", "unit": "%"},
             {"code": "receivable_ratio", "label": "매출채권/매출", "unit": "%"},
             {"code": "debt_to_assets", "label": "차입금/자산", "unit": "%"},
             {"code": "cfo_to_revenue", "label": "영업현금흐름/매출", "unit": "%"},
         ]
-    return [
-        {"code": "revenue", "label": "매출액", "unit": "KRW"},
-        {"code": "operating_margin", "label": "영업이익률", "unit": "%"},
-        {"code": "cfo_conversion", "label": "영업현금흐름 전환율", "unit": "배"},
-    ]
+    else:
+        industry_extras = [
+            {"code": "cfo_conversion", "label": "영업현금흐름 전환율", "unit": "배"},
+        ]
+    return [*COMMON_RATIO_DEFINITIONS, *industry_extras]
 
 
 def _comparison_metrics(values: dict[str, float | None], industry_id: str) -> dict[str, float | None]:
     revenue = values.get("매출액")
+    gross_profit = values.get("매출총이익")
     operating_income = values.get("영업이익")
     net_income = values.get("당기순이익")
     cfo = values.get("영업활동현금흐름")
     inventory = values.get("재고자산")
     capex = values.get("유형자산의 취득")
+    total_assets = values.get("자산총계")
+    total_liabilities = values.get("부채총계")
+    total_equity = values.get("자본총계")
+    current_assets = values.get("유동자산")
+    current_liabilities = values.get("유동부채")
     metrics = {
         "revenue": revenue,
         "operating_margin": _safe_div(operating_income, revenue, 100),
+        "gross_margin": _safe_div(gross_profit, revenue, 100),
+        "net_margin": _safe_div(net_income, revenue, 100),
+        "debt_ratio": _safe_div(total_liabilities, total_equity, 100),
+        "current_ratio": _safe_div(current_assets, current_liabilities, 100),
+        "asset_turnover": _safe_div(revenue, total_assets),
+        "roe": _safe_div(net_income, total_equity, 100),
         "inventory_ratio": _safe_div(inventory, revenue, 100),
         "capex_ratio": _safe_div(capex, revenue, 100),
-        # Defense financial facts carry no 당기순이익 account, so cfo conversion falls back to
+        # Defense financial facts carry sparse 당기순이익 coverage, so cfo conversion falls back to
         # operating income — the same denominator the dedicated defense liquidity metric uses.
         "cfo_conversion": _safe_div(cfo, operating_income) if industry_id == "defense" else _safe_div(cfo, net_income),
     }

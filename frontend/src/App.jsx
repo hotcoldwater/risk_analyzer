@@ -38,6 +38,12 @@ const industryOptions = [
 const commonMetricDefinitions = [
   { code: "revenue", label: "매출액", unit: "KRW" },
   { code: "operating_margin", label: "영업이익률", unit: "%" },
+  { code: "gross_margin", label: "매출총이익률", unit: "%" },
+  { code: "net_margin", label: "순이익률", unit: "%" },
+  { code: "debt_ratio", label: "부채비율", unit: "%" },
+  { code: "current_ratio", label: "유동비율", unit: "%" },
+  { code: "asset_turnover", label: "총자산회전율", unit: "배" },
+  { code: "roe", label: "ROE", unit: "%" },
   { code: "cfo_conversion", label: "영업현금흐름 전환율", unit: "배" },
 ];
 
