@@ -52,17 +52,31 @@ INDUSTRY_TABLE_HEADERS = [
 ]
 
 
+def clean_field(value: str) -> str:
+    """Match the uploader's clean_identifier: strip spreadsheet-export quote
+    artifacts (e.g. a cell literally containing 01199550") before comparing."""
+    return (value or "").strip().strip('"').strip()
+
+
+def normalize_corp_code(value: str) -> str:
+    """Match the uploader's own zero-padding (clean_identifier(width=8)) so a
+    padded "01524093" and an unpadded "1524093" in the bundle are recognized
+    as the same natural key."""
+    cleaned = clean_field(value)
+    return cleaned.zfill(8) if cleaned.isdigit() else cleaned
+
+
 def load_existing_keys(bundle_csv: Path) -> set[tuple[str, str, str, str, str]]:
     keys: set[tuple[str, str, str, str, str]] = set()
     with bundle_csv.open(encoding="utf-8-sig", newline="") as file:
         for row in csv.DictReader(file):
             keys.add(
                 (
-                    row["corp_code"].strip(),
-                    row["year"].strip(),
-                    row["fs_div"].strip(),
-                    row["sj_div"].strip(),
-                    row["account_name"].strip(),
+                    normalize_corp_code(row["corp_code"]),
+                    clean_field(row["year"]),
+                    clean_field(row["fs_div"]),
+                    clean_field(row["sj_div"]),
+                    clean_field(row["account_name"]),
                 )
             )
     return keys
@@ -80,6 +94,53 @@ def parse_amount(raw: str | None) -> int | None:
         return None
 
 
+def resolve_conflict(
+    key: tuple[str, str, str],
+    matches: list[sqlite3.Row],
+    account_variants: list[str],
+) -> sqlite3.Row:
+    """Pick one row when several account_nm variants matched the same
+    (corp_code, year, fs_div). Two resolvable patterns, both requiring an
+    audit note:
+
+    1. The *same* account_nm appears more than once (a filer split one line
+       into a current/non-current breakdown under an identical label) — the
+       row with the lowest statement `ord` (its position in the filing) is
+       the one already used for companies that load cleanly today.
+    2. *Different* account_nm variants matched — prefer whichever variant is
+       listed first in --account-variants (the caller's priority order).
+
+    Raises if neither rule narrows it to one row, so a genuinely ambiguous
+    cell is never silently guessed.
+    """
+    distinct_names = {row["account_nm"] for row in matches}
+    if len(distinct_names) == 1:
+        try:
+            chosen = min(matches, key=lambda row: int(row["ord"]))
+        except (TypeError, ValueError):
+            chosen = None
+        if chosen is not None:
+            print(f"  [해석] {key}: 동일 계정명 '{chosen['account_nm']}' 중복 -> ord={chosen['ord']}(최소) 채택")
+            return chosen
+    else:
+        with_value = [row for row in matches if parse_amount(row["thstrm_amount"]) is not None]
+        pool = with_value or matches
+        for variant in account_variants:
+            candidates = [row for row in pool if row["account_nm"] == variant]
+            if candidates:
+                chosen = candidates[0]
+                other_names = sorted(distinct_names - {variant})
+                reason = "값 없는 후보 제외 후 " if with_value != matches else ""
+                print(f"  [해석] {key}: 후보 {other_names} 대신 {reason}우선순위가 높은 '{variant}' 채택")
+                return chosen
+
+    raise SystemExit(
+        f"{key}에서 계정명 후보를 하나로 좁히지 못했습니다: "
+        f"{[(r['account_nm'], r['ord'], r['thstrm_amount']) for r in matches]}. "
+        "--account-variants 순서를 조정하거나 범위를 좁혀주세요."
+    )
+
+
 def extract_rows(
     db_path: Path,
     account_variants: list[str],
@@ -92,7 +153,7 @@ def extract_rows(
     placeholders_sj = ",".join("?" for _ in sj_divs)
     cursor = connection.execute(
         f"""
-        SELECT corp_code, stock_code, corp_name, bsns_year, fs_div, sj_div, account_nm, thstrm_amount
+        SELECT corp_code, stock_code, corp_name, bsns_year, fs_div, sj_div, account_nm, ord, thstrm_amount
         FROM financial_statements
         WHERE account_nm IN ({placeholders_account})
           AND sj_div IN ({placeholders_sj})
@@ -102,25 +163,15 @@ def extract_rows(
     raw_rows = cursor.fetchall()
     connection.close()
 
-    # Guard against more than one matching account_nm variant landing on the same
-    # (corp_code, year, fs_div): that would mean the variant list is too broad.
     grouped: dict[tuple[str, str, str], list[sqlite3.Row]] = defaultdict(list)
     for row in raw_rows:
         grouped[(row["corp_code"], row["bsns_year"], row["fs_div"])].append(row)
 
-    conflicts = {key: rows for key, rows in grouped.items() if len(rows) > 1}
-    if conflicts:
-        sample_key, sample_rows = next(iter(conflicts.items()))
-        raise SystemExit(
-            f"{len(conflicts)}개 (corp_code, year, fs_div) 조합에서 계정명 후보가 2개 이상 매칭됩니다. "
-            f"--account-variants 범위를 좁혀주세요. 예: {sample_key} -> "
-            f"{[r['account_nm'] for r in sample_rows]}"
-        )
-
     today = date.today().isoformat()
     rows: list[dict[str, Any]] = []
-    for (corp_code, year, fs_div), matches in grouped.items():
-        source_row = matches[0]
+    for key, matches in grouped.items():
+        source_row = matches[0] if len(matches) == 1 else resolve_conflict(key, matches, account_variants)
+        corp_code, year, fs_div = key
         amount = parse_amount(source_row["thstrm_amount"])
         if amount is None:
             continue
@@ -164,7 +215,7 @@ def main() -> None:
     new_rows = [
         row
         for row in candidate_rows
-        if (row["corp_code"], row["year"], row["fs_div"], row["sj_div"], row["account_name"]) not in existing_keys
+        if (normalize_corp_code(row["corp_code"]), row["year"], row["fs_div"], row["sj_div"], row["account_name"]) not in existing_keys
     ]
     skipped_existing = len(candidate_rows) - len(new_rows)
 
