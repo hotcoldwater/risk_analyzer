@@ -21,19 +21,34 @@ const industryLabels = {
   defense: "방산",
   semiconductor: "반도체",
   construction: "건설",
+  all: "전체",
+  kospi: "코스피",
+  kosdaq: "코스닥",
 };
 
 const industryComparisonYears = {
   defense: [2025, 2024, 2023, 2022, 2021],
-  semiconductor: [2025, 2024, 2023],
-  construction: [2025, 2024, 2023],
+  semiconductor: [2025, 2024, 2023, 2022, 2021],
+  construction: [2025, 2024, 2023, 2022, 2021],
+  all: [2025, 2024, 2023, 2022, 2021],
+  kospi: [2025, 2024, 2023, 2022, 2021],
+  kosdaq: [2025, 2024, 2023, 2022, 2021],
 };
 
+// Market-wide categories only ever show the common ratio columns (no industry-specific
+// extras like 계약자산/CAPEX), since they span companies with no shared business model.
+const marketWideIndustryIds = new Set(["all", "kospi", "kosdaq"]);
+
 const industryOptions = [
+  { id: "all", label: "전체" },
   { id: "defense", label: "방산" },
   { id: "semiconductor", label: "반도체" },
   { id: "construction", label: "건설" },
+  { id: "kospi", label: "코스피" },
+  { id: "kosdaq", label: "코스닥" },
 ];
+
+const TABLE_PAGE_SIZE = 100;
 
 const commonMetricDefinitions = [
   { code: "revenue", label: "매출액", unit: "KRW" },
@@ -51,6 +66,9 @@ const inspectorAccountsByIndustry = {
   defense: ["매출액", "계약자산", "계약부채", "매출채권", "영업활동현금흐름"],
   semiconductor: ["매출액", "재고자산", "유형자산의 취득", "영업활동현금흐름"],
   construction: ["매출액", "계약자산(미청구공사)", "매출채권", "영업활동현금흐름"],
+  all: ["매출액", "매출총이익", "당기순이익", "영업활동현금흐름"],
+  kospi: ["매출액", "매출총이익", "당기순이익", "영업활동현금흐름"],
+  kosdaq: ["매출액", "매출총이익", "당기순이익", "영업활동현금흐름"],
 };
 
 function uniqueIndustries(groups) {
@@ -371,10 +389,12 @@ function IndustryComparisonTable({ comparison, activeIndustryId, onIndustryChang
   const [sortDirection, setSortDirection] = useState("desc");
   const [searchTerm, setSearchTerm] = useState("");
   const [riskFilter, setRiskFilter] = useState("all");
+  const [page, setPage] = useState(0);
   const [selectedRow, setSelectedRow] = useState(() => comparison.rows[0] || null);
   const [detailData, setDetailData] = useState(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const definitions = commonMetricDefinitions;
+  const isMarketWide = marketWideIndustryIds.has(comparison.industryId);
   const riskLevels = useMemo(
     () => [...new Set(comparison.rows.map((row) => row.riskLevel))],
     [comparison.rows],
@@ -388,11 +408,15 @@ function IndustryComparisonTable({ comparison, activeIndustryId, onIndustryChang
     return matchesSearch && matchesRisk;
   });
   const sortedRows = [...filteredRows].sort((left, right) => ((sortDirection === "desc" ? 1 : -1) * ((right.metrics[sortCode] ?? Number.NEGATIVE_INFINITY) - (left.metrics[sortCode] ?? Number.NEGATIVE_INFINITY))));
+  const pageCount = Math.max(Math.ceil(sortedRows.length / TABLE_PAGE_SIZE), 1);
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = sortedRows.slice(safePage * TABLE_PAGE_SIZE, (safePage + 1) * TABLE_PAGE_SIZE);
 
   useEffect(() => {
     setSelectedRow(filteredRows[0] || null);
+    setPage(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [comparison.industryId, comparison.year, searchTerm, riskFilter]);
+  }, [comparison.industryId, comparison.year, searchTerm, riskFilter, sortCode, sortDirection]);
 
   useEffect(() => {
     if (!selectedRow) return undefined;
@@ -405,7 +429,7 @@ function IndustryComparisonTable({ comparison, activeIndustryId, onIndustryChang
 
   function selectSort(code) { if (code === sortCode) setSortDirection((current) => current === "desc" ? "asc" : "desc"); else { setSortCode(code); setSortDirection("desc"); } }
 
-  return <section className="comparison-section"><div className="comparison-head"><div><p className="eyebrow">전체 기업 · {comparison.year}</p><h2>{industryLabels[comparison.industryId] || comparison.industryId} 기업 목록</h2><p>{comparison.industryId === "construction" ? "A/B/C 분류 전 전체 표본을 보는 탐색용 비교입니다. 신호는 검토 우선순위이며, 정식 동종 벤치마크는 아닙니다." : "연결(CFS) 우선으로 수집하며, 값이 없을 경우 별도(OFS) 기준을 사용합니다."}</p></div></div><ComparisonControls activeIndustryId={activeIndustryId} availableYears={availableYears} onIndustryChange={onIndustryChange} onRiskFilterChange={setRiskFilter} onSearchChange={setSearchTerm} onYearChange={onYearChange} riskFilter={riskFilter} riskLevels={riskLevels} searchTerm={searchTerm} year={year} /><ComparisonKpiStrip comparison={comparison} rows={filteredRows} /><div className="comparison-workbench"><div className="comparison-table-wrap">{sortedRows.length ? <table className="comparison-table"><thead><tr><th>기업</th><th>기준</th><th>데이터</th>{comparison.industryId === "construction" ? <th>비교군 후보</th> : null}<th>검토 신호</th>{definitions.map((definition) => <th key={definition.code}><button onClick={() => selectSort(definition.code)} type="button">{definition.label} {sortCode === definition.code ? (sortDirection === "desc" ? "↓" : "↑") : "↕"}</button></th>)}</tr></thead><tbody>{sortedRows.map((row) => <tr className={selectedRow?.corpCode === row.corpCode ? "selected" : ""} key={row.corpCode} onClick={() => setSelectedRow(row)}><td><strong>{row.corpName}</strong><span>{row.stockCode}</span></td><td>{row.basis || "N/A"}</td><td>{row.completeness}/{row.requiredAccountCount}</td>{comparison.industryId === "construction" ? <td>{row.peerGroupSuggestion || "검토 필요"}</td> : null}<td><em className={`risk-badge ${row.riskLevel}`}>{row.riskLevel}</em></td>{definitions.map((definition) => <td className={signClass(row.metrics[definition.code], definition.unit)} key={definition.code}>{formatComparisonValue(row.metrics[definition.code], definition)}</td>)}</tr>)}</tbody></table> : <p className="comparison-empty">조건에 맞는 기업이 없습니다. 검색어나 신호 필터를 조정하세요.</p>}</div><ComparisonInspector comparison={comparison} detailData={detailData} isLoading={isDetailLoading} onOpenCompany={onOpenCompany} selectedRow={selectedRow} /></div></section>;
+  return <section className="comparison-section"><div className="comparison-head"><div><p className="eyebrow">전체 기업 · {comparison.year}</p><h2>{industryLabels[comparison.industryId] || comparison.industryId} 기업 목록</h2><p>{comparison.industryId === "construction" ? "A/B/C 분류 전 전체 표본을 보는 탐색용 비교입니다. 신호는 검토 우선순위이며, 정식 동종 벤치마크는 아닙니다." : isMarketWide ? "산업 특화 지표 없이 공통 재무비율만 제공하는 탐색용 화면입니다. 연결(CFS) 우선, 값이 없으면 별도(OFS) 기준을 사용합니다." : "연결(CFS) 우선으로 수집하며, 값이 없을 경우 별도(OFS) 기준을 사용합니다."}</p></div></div><ComparisonControls activeIndustryId={activeIndustryId} availableYears={availableYears} onIndustryChange={onIndustryChange} onRiskFilterChange={setRiskFilter} onSearchChange={setSearchTerm} onYearChange={onYearChange} riskFilter={riskFilter} riskLevels={riskLevels} searchTerm={searchTerm} year={year} /><ComparisonKpiStrip comparison={comparison} rows={filteredRows} /><div className="comparison-workbench"><div className="comparison-table-wrap">{pageRows.length ? <table className="comparison-table"><thead><tr><th>기업</th><th>기준</th><th>데이터</th>{comparison.industryId === "construction" ? <th>비교군 후보</th> : null}<th>검토 신호</th>{definitions.map((definition) => <th key={definition.code}><button onClick={() => selectSort(definition.code)} type="button">{definition.label} {sortCode === definition.code ? (sortDirection === "desc" ? "↓" : "↑") : "↕"}</button></th>)}</tr></thead><tbody>{pageRows.map((row) => <tr className={selectedRow?.corpCode === row.corpCode ? "selected" : ""} key={row.corpCode} onClick={() => setSelectedRow(row)}><td><strong>{row.corpName}</strong><span>{row.stockCode}</span></td><td>{row.basis || "N/A"}</td><td>{row.completeness}/{row.requiredAccountCount}</td>{comparison.industryId === "construction" ? <td>{row.peerGroupSuggestion || "검토 필요"}</td> : null}<td><em className={`risk-badge ${row.riskLevel}`}>{row.riskLevel}</em></td>{definitions.map((definition) => <td className={signClass(row.metrics[definition.code], definition.unit)} key={definition.code}>{formatComparisonValue(row.metrics[definition.code], definition)}</td>)}</tr>)}</tbody></table> : <p className="comparison-empty">조건에 맞는 기업이 없습니다. 검색어나 신호 필터를 조정하세요.</p>}{pageCount > 1 ? <div className="table-pagination"><button disabled={safePage === 0} onClick={() => setPage((current) => Math.max(current - 1, 0))} type="button">이전</button><span>{safePage + 1} / {pageCount} 페이지 · {sortedRows.length}개사 중 {safePage * TABLE_PAGE_SIZE + 1}–{Math.min((safePage + 1) * TABLE_PAGE_SIZE, sortedRows.length)}</span><button disabled={safePage >= pageCount - 1} onClick={() => setPage((current) => Math.min(current + 1, pageCount - 1))} type="button">다음</button></div> : null}</div><ComparisonInspector comparison={comparison} detailData={detailData} isLoading={isDetailLoading} onOpenCompany={onOpenCompany} selectedRow={selectedRow} /></div></section>;
 }
 
 function IndustryPickerModal({ profile, onSelect, onClose }) {
@@ -922,7 +946,7 @@ function App() {
   const [isSemiconductorLoading, setIsSemiconductorLoading] = useState(false);
   const [constructionData, setConstructionData] = useState(null);
   const [isConstructionLoading, setIsConstructionLoading] = useState(false);
-  const [tableIndustryId, setTableIndustryId] = useState("defense");
+  const [tableIndustryId, setTableIndustryId] = useState("all");
   const [tableYear, setTableYear] = useState(2025);
   const [tableComparison, setTableComparison] = useState(null);
   const [isTableLoading, setIsTableLoading] = useState(false);
