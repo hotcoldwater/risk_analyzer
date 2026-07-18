@@ -533,7 +533,7 @@ def get_industry_company_comparison(
                 ORDER BY year, account_name
                 """
             ).format(sql.Identifier(industry_id)),
-            {"corp_code": corp_code, "start_year": year - 2, "year": year, "accounts": accounts},
+            {"corp_code": corp_code, "start_year": year - 4, "year": year, "accounts": accounts},
         )
         financial_rows = cursor.fetchall()
 
