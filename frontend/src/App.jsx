@@ -1210,8 +1210,8 @@ function App() {
     <div className="app-shell">
       <aside className="side-nav">
         <div className="brand-block">
-          <span className="brand-mark">ARI</span>
-          <strong>Audit Risk<br />Intelligence</strong>
+          <span className="brand-mark">VZ</span>
+          <strong>ViZon</strong>
           <p>산업별 재무 리스크 분석</p>
         </div>
       </aside>
