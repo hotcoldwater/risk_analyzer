@@ -249,7 +249,16 @@ INDUSTRY_COMPARISON_ACCOUNTS = {
         *STANDARD_RATIO_ACCOUNTS, "계약자산(미청구공사)", "차입금", "충당부채",
     ],
     "defense": [*STANDARD_RATIO_ACCOUNTS, "계약자산", "계약부채"],
+    "kospi": STANDARD_RATIO_ACCOUNTS,
+    "kosdaq": STANDARD_RATIO_ACCOUNTS,
+    # Virtual category: every KOSPI/KOSDAQ-listed company, common ratios only. Not a
+    # physical table — every listed company (including the 3 curated industries) already
+    # has a row in kospi or kosdaq, never both, so a UNION ALL over those two is complete
+    # and duplicate-free without touching defense/semiconductor/construction at all.
+    "all": STANDARD_RATIO_ACCOUNTS,
 }
+
+MARKET_WIDE_INDUSTRY_IDS = {"kospi", "kosdaq"}
 
 COMMON_RATIO_DEFINITIONS = [
     {"code": "revenue", "label": "매출액", "unit": "KRW"},
@@ -346,24 +355,49 @@ def get_industry_comparison(database_url: str, industry_id: str, year: int = CUR
 
     accounts = INDUSTRY_COMPARISON_ACCOUNTS[industry_id]
     with _connect(database_url) as connection, connection.cursor() as cursor:
-        cursor.execute(
-            sql.SQL(
+        if industry_id == "all":
+            query = sql.SQL(
                 """
                 SELECT m.corp_code, m.stock_code, m.corp_name, m.level,
                        c.classification, c.revenue_recognition_code,
                        f.fs_div, f.account_name, f.amount
                 FROM public.industry_map AS m
                 LEFT JOIN public.companies_basic AS c ON c.corp_code = m.corp_code
-                LEFT JOIN public.{} AS f
+                LEFT JOIN (
+                    SELECT * FROM public.kospi
+                    UNION ALL
+                    SELECT * FROM public.kosdaq
+                ) AS f
                   ON f.corp_code = m.corp_code
                  AND f.year = %(year)s
                  AND f.account_name = ANY(%(accounts)s)
-                WHERE m.industry_id = %(industry_id)s
+                WHERE m.industry_id = ANY(%(market_industry_ids)s)
                 ORDER BY m.corp_name
                 """
-            ).format(sql.Identifier(industry_id)),
-            {"year": year, "accounts": accounts, "industry_id": industry_id},
-        )
+            )
+            cursor.execute(
+                query,
+                {"year": year, "accounts": accounts, "market_industry_ids": list(MARKET_WIDE_INDUSTRY_IDS)},
+            )
+        else:
+            cursor.execute(
+                sql.SQL(
+                    """
+                    SELECT m.corp_code, m.stock_code, m.corp_name, m.level,
+                           c.classification, c.revenue_recognition_code,
+                           f.fs_div, f.account_name, f.amount
+                    FROM public.industry_map AS m
+                    LEFT JOIN public.companies_basic AS c ON c.corp_code = m.corp_code
+                    LEFT JOIN public.{} AS f
+                      ON f.corp_code = m.corp_code
+                     AND f.year = %(year)s
+                     AND f.account_name = ANY(%(accounts)s)
+                    WHERE m.industry_id = %(industry_id)s
+                    ORDER BY m.corp_name
+                    """
+                ).format(sql.Identifier(industry_id)),
+                {"year": year, "accounts": accounts, "industry_id": industry_id},
+            )
         records = cursor.fetchall()
 
     companies: dict[str, dict[str, Any]] = {}
@@ -521,6 +555,21 @@ def get_industry_company_comparison(
     if row is None:
         raise LookupError("해당 산업의 분석 대상 기업이 아닙니다.")
     accounts = INDUSTRY_COMPARISON_ACCOUNTS[industry_id]
+
+    # "all" has no physical table; resolve the company's real market table (kospi/kosdaq)
+    # to read its account series from.
+    table_id = industry_id
+    if industry_id == "all":
+        with _connect(database_url) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT industry_id FROM public.industry_map WHERE corp_code = %(corp_code)s AND industry_id = ANY(%(market_industry_ids)s) LIMIT 1",
+                {"corp_code": corp_code, "market_industry_ids": list(MARKET_WIDE_INDUSTRY_IDS)},
+            )
+            resolved = cursor.fetchone()
+        if resolved is None:
+            raise LookupError("해당 기업의 시장 소속을 확인할 수 없습니다.")
+        table_id = resolved["industry_id"]
+
     with _connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute(
             sql.SQL(
@@ -532,8 +581,8 @@ def get_industry_company_comparison(
                   AND account_name = ANY(%(accounts)s)
                 ORDER BY year, account_name
                 """
-            ).format(sql.Identifier(industry_id)),
-            {"corp_code": corp_code, "start_year": year - 2, "year": year, "accounts": accounts},
+            ).format(sql.Identifier(table_id)),
+            {"corp_code": corp_code, "start_year": year - 4, "year": year, "accounts": accounts},
         )
         financial_rows = cursor.fetchall()
 
@@ -570,7 +619,8 @@ def get_industry_company_comparison(
             "semiconductor": "위험 신호가 없더라도 재고·CAPEX·현금흐름의 연도별 방향성과 사업 설명의 일관성을 확인하세요.",
             "defense": "위험 신호가 없더라도 계약자산·계약부채·매출채권·영업현금흐름의 연도별 방향성과 수익인식 방식의 일관성을 확인하세요. 방산의 계약자산·현금화 전용 신호는 기업 상세의 현금화 리스크 분석에서 확인하세요.",
         }
-        audit_questions = [fallback_by_industry.get(industry_id, fallback_by_industry["semiconductor"])]
+        default_fallback = "위험 신호가 없더라도 매출총이익률·부채비율·유동비율·ROE의 연도별 방향성과 사업 설명의 일관성을 확인하세요. 이 산업 카테고리는 아직 특화 위험 규칙이 없어 공통 재무비율만 제공합니다."
+        audit_questions = [fallback_by_industry.get(industry_id, default_fallback)]
     return {
         "industryId": comparison["industryId"],
         "year": comparison["year"],
@@ -584,6 +634,8 @@ def get_industry_company_comparison(
             else "연결(CFS) 값을 우선 사용하고 값이 없을 때 별도(OFS) 값을 사용합니다. 산업 3사분위와 0.5배 기준은 추가 검토 우선순위이며 결론이 아닙니다."
             if industry_id == "semiconductor"
             else "연결(CFS) 값을 우선 사용하고 값이 없을 때 별도(OFS) 값을 사용합니다. 방산은 이 화면에서 공통 지표만 계산하며, 계약자산·순계약자산 기반의 정식 위험 신호는 기업 상세의 현금화 리스크 분석에서 확인하세요."
+            if industry_id == "defense"
+            else "연결(CFS) 값을 우선 사용하고 값이 없을 때 별도(OFS) 값을 사용합니다. 코스피·코스닥 전체 카테고리는 산업 특화 위험 규칙 없이 공통 재무비율만 제공하는 탐색용 화면입니다."
         ),
     }
 

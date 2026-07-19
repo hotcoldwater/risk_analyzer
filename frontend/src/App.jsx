@@ -21,19 +21,34 @@ const industryLabels = {
   defense: "방산",
   semiconductor: "반도체",
   construction: "건설",
+  all: "전체",
+  kospi: "코스피",
+  kosdaq: "코스닥",
 };
 
 const industryComparisonYears = {
   defense: [2025, 2024, 2023, 2022, 2021],
-  semiconductor: [2025, 2024, 2023],
-  construction: [2025, 2024, 2023],
+  semiconductor: [2025, 2024, 2023, 2022, 2021],
+  construction: [2025, 2024, 2023, 2022, 2021],
+  all: [2025, 2024, 2023, 2022, 2021],
+  kospi: [2025, 2024, 2023, 2022, 2021],
+  kosdaq: [2025, 2024, 2023, 2022, 2021],
 };
 
+// Market-wide categories only ever show the common ratio columns (no industry-specific
+// extras like 계약자산/CAPEX), since they span companies with no shared business model.
+const marketWideIndustryIds = new Set(["all", "kospi", "kosdaq"]);
+
 const industryOptions = [
+  { id: "all", label: "전체" },
   { id: "defense", label: "방산" },
   { id: "semiconductor", label: "반도체" },
   { id: "construction", label: "건설" },
+  { id: "kospi", label: "코스피" },
+  { id: "kosdaq", label: "코스닥" },
 ];
+
+const TABLE_PAGE_SIZE = 100;
 
 const commonMetricDefinitions = [
   { code: "revenue", label: "매출액", unit: "KRW" },
@@ -51,6 +66,9 @@ const inspectorAccountsByIndustry = {
   defense: ["매출액", "계약자산", "계약부채", "매출채권", "영업활동현금흐름"],
   semiconductor: ["매출액", "재고자산", "유형자산의 취득", "영업활동현금흐름"],
   construction: ["매출액", "계약자산(미청구공사)", "매출채권", "영업활동현금흐름"],
+  all: ["매출액", "매출총이익", "당기순이익", "영업활동현금흐름"],
+  kospi: ["매출액", "매출총이익", "당기순이익", "영업활동현금흐름"],
+  kosdaq: ["매출액", "매출총이익", "당기순이익", "영업활동현금흐름"],
 };
 
 function uniqueIndustries(groups) {
@@ -290,7 +308,7 @@ function MiniSparkline({ values }) {
     return `${x},${y}`;
   });
   const last = points.at(-1).split(",");
-  return <svg className={`mini-spark ${valid.at(-1) >= valid[0] ? "rising" : "falling"}`} viewBox="0 0 108 48" role="img" aria-label="3개년 추이"><polyline points={points.join(" ")} /><circle cx={last[0]} cy={last[1]} r="2.7" /></svg>;
+  return <svg className={`mini-spark ${valid.at(-1) >= valid[0] ? "rising" : "falling"}`} viewBox="0 0 108 48" role="img" aria-label="5개년 추이"><polyline points={points.join(" ")} /><circle cx={last[0]} cy={last[1]} r="2.7" /></svg>;
 }
 
 function ComparisonKpiStrip({ comparison, rows }) {
@@ -371,10 +389,12 @@ function IndustryComparisonTable({ comparison, activeIndustryId, onIndustryChang
   const [sortDirection, setSortDirection] = useState("desc");
   const [searchTerm, setSearchTerm] = useState("");
   const [riskFilter, setRiskFilter] = useState("all");
+  const [page, setPage] = useState(0);
   const [selectedRow, setSelectedRow] = useState(() => comparison.rows[0] || null);
   const [detailData, setDetailData] = useState(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const definitions = commonMetricDefinitions;
+  const isMarketWide = marketWideIndustryIds.has(comparison.industryId);
   const riskLevels = useMemo(
     () => [...new Set(comparison.rows.map((row) => row.riskLevel))],
     [comparison.rows],
@@ -388,11 +408,15 @@ function IndustryComparisonTable({ comparison, activeIndustryId, onIndustryChang
     return matchesSearch && matchesRisk;
   });
   const sortedRows = [...filteredRows].sort((left, right) => ((sortDirection === "desc" ? 1 : -1) * ((right.metrics[sortCode] ?? Number.NEGATIVE_INFINITY) - (left.metrics[sortCode] ?? Number.NEGATIVE_INFINITY))));
+  const pageCount = Math.max(Math.ceil(sortedRows.length / TABLE_PAGE_SIZE), 1);
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = sortedRows.slice(safePage * TABLE_PAGE_SIZE, (safePage + 1) * TABLE_PAGE_SIZE);
 
   useEffect(() => {
     setSelectedRow(filteredRows[0] || null);
+    setPage(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [comparison.industryId, comparison.year, searchTerm, riskFilter]);
+  }, [comparison.industryId, comparison.year, searchTerm, riskFilter, sortCode, sortDirection]);
 
   useEffect(() => {
     if (!selectedRow) return undefined;
@@ -405,7 +429,7 @@ function IndustryComparisonTable({ comparison, activeIndustryId, onIndustryChang
 
   function selectSort(code) { if (code === sortCode) setSortDirection((current) => current === "desc" ? "asc" : "desc"); else { setSortCode(code); setSortDirection("desc"); } }
 
-  return <section className="comparison-section"><div className="comparison-head"><div><p className="eyebrow">전체 기업 · {comparison.year}</p><h2>{industryLabels[comparison.industryId] || comparison.industryId} 기업 목록</h2><p>{comparison.industryId === "construction" ? "A/B/C 분류 전 전체 표본을 보는 탐색용 비교입니다. 신호는 검토 우선순위이며, 정식 동종 벤치마크는 아닙니다." : "연결(CFS) 우선으로 수집하며, 값이 없을 경우 별도(OFS) 기준을 사용합니다."}</p></div></div><ComparisonControls activeIndustryId={activeIndustryId} availableYears={availableYears} onIndustryChange={onIndustryChange} onRiskFilterChange={setRiskFilter} onSearchChange={setSearchTerm} onYearChange={onYearChange} riskFilter={riskFilter} riskLevels={riskLevels} searchTerm={searchTerm} year={year} /><ComparisonKpiStrip comparison={comparison} rows={filteredRows} /><div className="comparison-workbench"><div className="comparison-table-wrap">{sortedRows.length ? <table className="comparison-table"><thead><tr><th>기업</th><th>기준</th><th>데이터</th>{comparison.industryId === "construction" ? <th>비교군 후보</th> : null}<th>검토 신호</th>{definitions.map((definition) => <th key={definition.code}><button onClick={() => selectSort(definition.code)} type="button">{definition.label} {sortCode === definition.code ? (sortDirection === "desc" ? "↓" : "↑") : "↕"}</button></th>)}</tr></thead><tbody>{sortedRows.map((row) => <tr className={selectedRow?.corpCode === row.corpCode ? "selected" : ""} key={row.corpCode} onClick={() => setSelectedRow(row)}><td><strong>{row.corpName}</strong><span>{row.stockCode}</span></td><td>{row.basis || "N/A"}</td><td>{row.completeness}/{row.requiredAccountCount}</td>{comparison.industryId === "construction" ? <td>{row.peerGroupSuggestion || "검토 필요"}</td> : null}<td><em className={`risk-badge ${row.riskLevel}`}>{row.riskLevel}</em></td>{definitions.map((definition) => <td className={signClass(row.metrics[definition.code], definition.unit)} key={definition.code}>{formatComparisonValue(row.metrics[definition.code], definition)}</td>)}</tr>)}</tbody></table> : <p className="comparison-empty">조건에 맞는 기업이 없습니다. 검색어나 신호 필터를 조정하세요.</p>}</div><ComparisonInspector comparison={comparison} detailData={detailData} isLoading={isDetailLoading} onOpenCompany={onOpenCompany} selectedRow={selectedRow} /></div></section>;
+  return <section className="comparison-section"><div className="comparison-head"><div><p className="eyebrow">전체 기업 · {comparison.year}</p><h2>{industryLabels[comparison.industryId] || comparison.industryId} 기업 목록</h2><p>{comparison.industryId === "construction" ? "A/B/C 분류 전 전체 표본을 보는 탐색용 비교입니다. 신호는 검토 우선순위이며, 정식 동종 벤치마크는 아닙니다." : isMarketWide ? "산업 특화 지표 없이 공통 재무비율만 제공하는 탐색용 화면입니다. 연결(CFS) 우선, 값이 없으면 별도(OFS) 기준을 사용합니다." : "연결(CFS) 우선으로 수집하며, 값이 없을 경우 별도(OFS) 기준을 사용합니다."}</p></div></div><ComparisonControls activeIndustryId={activeIndustryId} availableYears={availableYears} onIndustryChange={onIndustryChange} onRiskFilterChange={setRiskFilter} onSearchChange={setSearchTerm} onYearChange={onYearChange} riskFilter={riskFilter} riskLevels={riskLevels} searchTerm={searchTerm} year={year} /><ComparisonKpiStrip comparison={comparison} rows={filteredRows} /><div className="comparison-workbench"><div className="comparison-table-wrap">{pageRows.length ? <table className="comparison-table"><thead><tr><th>기업</th><th>기준</th><th>데이터</th>{comparison.industryId === "construction" ? <th>비교군 후보</th> : null}<th>검토 신호</th>{definitions.map((definition) => <th key={definition.code}><button onClick={() => selectSort(definition.code)} type="button">{definition.label} {sortCode === definition.code ? (sortDirection === "desc" ? "↓" : "↑") : "↕"}</button></th>)}</tr></thead><tbody>{pageRows.map((row) => <tr className={selectedRow?.corpCode === row.corpCode ? "selected" : ""} key={row.corpCode} onClick={() => setSelectedRow(row)}><td><strong>{row.corpName}</strong><span>{row.stockCode}</span></td><td>{row.basis || "N/A"}</td><td>{row.completeness}/{row.requiredAccountCount}</td>{comparison.industryId === "construction" ? <td>{row.peerGroupSuggestion || "검토 필요"}</td> : null}<td><em className={`risk-badge ${row.riskLevel}`}>{row.riskLevel}</em></td>{definitions.map((definition) => <td className={signClass(row.metrics[definition.code], definition.unit)} key={definition.code}>{formatComparisonValue(row.metrics[definition.code], definition)}</td>)}</tr>)}</tbody></table> : <p className="comparison-empty">조건에 맞는 기업이 없습니다. 검색어나 신호 필터를 조정하세요.</p>}{pageCount > 1 ? <div className="table-pagination"><button disabled={safePage === 0} onClick={() => setPage((current) => Math.max(current - 1, 0))} type="button">이전</button><span>{safePage + 1} / {pageCount} 페이지 · {sortedRows.length}개사 중 {safePage * TABLE_PAGE_SIZE + 1}–{Math.min((safePage + 1) * TABLE_PAGE_SIZE, sortedRows.length)}</span><button disabled={safePage >= pageCount - 1} onClick={() => setPage((current) => Math.min(current + 1, pageCount - 1))} type="button">다음</button></div> : null}</div><ComparisonInspector comparison={comparison} detailData={detailData} isLoading={isDetailLoading} onOpenCompany={onOpenCompany} selectedRow={selectedRow} /></div></section>;
 }
 
 function IndustryPickerModal({ profile, onSelect, onClose }) {
@@ -733,7 +757,7 @@ function SemiconductorPanel({ data, industryId = "semiconductor", isLoading }) {
   if (isLoading) return <div className="loading-panel">{industryLabel} 위험 신호를 불러오는 중입니다.</div>;
   if (!data) return null;
   const accounts = isConstruction ? ["매출액", "계약자산(미청구공사)", "매출채권", "차입금", "충당부채", "영업활동현금흐름"] : ["매출액", "재고자산", "유형자산의 취득", "영업활동현금흐름"];
-  return <div className="analysis-panel"><div className="panel-toolbar"><div><p className="eyebrow">{industryLabel} 리스크 개요</p><h4>{data.row.riskLevel} · 2025년</h4></div><span>{data.row.basis || "기준 없음"} · 계정 {data.row.completeness}/{data.row.requiredAccountCount}</span></div><div className="indicator-grid">{data.metricDefinitions.map((definition) => <article className="indicator-card" key={definition.code}><span>{definition.label}</span><strong className={signClass(data.row.metrics[definition.code], definition.unit)}>{formatComparisonValue(data.row.metrics[definition.code], definition)}</strong><em>{isConstruction ? "전체 표본 초기 기준" : "산업 비교 기준"}</em></article>)}</div><div className="signal-stack">{data.row.riskSignals.length ? data.row.riskSignals.map((signal) => <article className="signal-card triggered" key={signal.code}><div className="signal-head"><strong>{signal.label}</strong><span>{signal.severity}</span></div><p>{signal.summary}</p></article>) : <div className="status-banner warning">현재 규칙의 검토 신호는 없습니다. 상세 계정과 사업 맥락을 함께 확인하세요.</div>}</div><section className="account-series"><div><p className="eyebrow">원천 계정 3개년</p><h5>{isConstruction ? "계약자산·채권·차입금·현금흐름의 방향을 확인하세요." : "재고·투자·현금흐름의 방향을 확인하세요."}</h5></div><div className="account-series-table"><div className="series-head"><span>계정</span>{data.accountSeries.map((point) => <span key={point.year}>{point.year} · {point.basis || "N/A"}</span>)}</div>{accounts.map((account) => <div className="series-line" key={account}><strong>{account}</strong>{data.accountSeries.map((point) => <span key={point.year}>{formatCompactNumber(point.values[account])}</span>)}</div>)}</div></section><section className="audit-questions"><p className="eyebrow">근거 메타데이터와 감사 확인 질문</p><p className="source-status">현재 재무 계정·비교 산식은 연결되어 있습니다. 원문 DART 공시 링크는 접수번호 데이터가 적재되면 연결됩니다.</p>{data.auditQuestions.map((question) => <p key={question}>{question}</p>)}<em>{data.limitations}</em></section></div>;
+  return <div className="analysis-panel"><div className="panel-toolbar"><div><p className="eyebrow">{industryLabel} 리스크 개요</p><h4>{data.row.riskLevel} · 2025년</h4></div><span>{data.row.basis || "기준 없음"} · 계정 {data.row.completeness}/{data.row.requiredAccountCount}</span></div><div className="indicator-grid">{data.metricDefinitions.map((definition) => <article className="indicator-card" key={definition.code}><span>{definition.label}</span><strong className={signClass(data.row.metrics[definition.code], definition.unit)}>{formatComparisonValue(data.row.metrics[definition.code], definition)}</strong><em>{isConstruction ? "전체 표본 초기 기준" : "산업 비교 기준"}</em></article>)}</div><div className="signal-stack">{data.row.riskSignals.length ? data.row.riskSignals.map((signal) => <article className="signal-card triggered" key={signal.code}><div className="signal-head"><strong>{signal.label}</strong><span>{signal.severity}</span></div><p>{signal.summary}</p></article>) : <div className="status-banner warning">현재 규칙의 검토 신호는 없습니다. 상세 계정과 사업 맥락을 함께 확인하세요.</div>}</div><section className="account-series"><div><p className="eyebrow">원천 계정 5개년</p><h5>{isConstruction ? "계약자산·채권·차입금·현금흐름의 방향을 확인하세요." : "재고·투자·현금흐름의 방향을 확인하세요."}</h5></div><div className="account-series-table"><div className="series-head"><span>계정</span>{data.accountSeries.map((point) => <span key={point.year}>{point.year} · {point.basis || "N/A"}</span>)}</div>{accounts.map((account) => <div className="series-line" key={account}><strong>{account}</strong>{data.accountSeries.map((point) => <span key={point.year}>{formatCompactNumber(point.values[account])}</span>)}</div>)}</div></section><section className="audit-questions"><p className="eyebrow">근거 메타데이터와 감사 확인 질문</p><p className="source-status">현재 재무 계정·비교 산식은 연결되어 있습니다. 원문 DART 공시 링크는 접수번호 데이터가 적재되면 연결됩니다.</p>{data.auditQuestions.map((question) => <p key={question}>{question}</p>)}<em>{data.limitations}</em></section></div>;
 }
 
 function ReviewDesk({ profile, selectedIndustryId, activeTab, metricData }) {
@@ -922,7 +946,7 @@ function App() {
   const [isSemiconductorLoading, setIsSemiconductorLoading] = useState(false);
   const [constructionData, setConstructionData] = useState(null);
   const [isConstructionLoading, setIsConstructionLoading] = useState(false);
-  const [tableIndustryId, setTableIndustryId] = useState("defense");
+  const [tableIndustryId, setTableIndustryId] = useState("all");
   const [tableYear, setTableYear] = useState(2025);
   const [tableComparison, setTableComparison] = useState(null);
   const [isTableLoading, setIsTableLoading] = useState(false);

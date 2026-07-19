@@ -674,6 +674,9 @@ em {
 .comparison-kpis span, .comparison-kpis em { display: block; color: var(--muted); font-size: .67rem; font-style: normal; }
 .comparison-kpis strong { display: block; margin: 4px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.08rem; }
 .comparison-table-wrap { margin-top: 0; border-radius: 10px; max-height: calc(100vh - 185px); overflow: auto; }
+.table-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 10px 0; border-top: 1px solid var(--line); font-size: .74rem; color: var(--muted); }
+.table-pagination button { min-height: 32px; padding: 0 14px; border: 1px solid var(--line); border-radius: 7px; background: #fff; font-size: .74rem; cursor: pointer; }
+.table-pagination button:disabled { opacity: .4; cursor: not-allowed; }
 .comparison-table { min-width: 800px; font-size: .78rem; }
 .comparison-table th, .comparison-table td { padding: 10px 11px; }
 .comparison-table th { top: 0; font-size: .68rem; letter-spacing: .02em; }
