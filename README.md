@@ -4,8 +4,7 @@
 
 🔗 **Live Demo**: [https://risk-analyzer.pages.dev/](https://risk-analyzer.pages.dev/)
 
-
-|![기업 비교 테이블](docs/screenshots/compare-table.png)
+![기업 비교 테이블](docs/screenshots/compare-table.png)
 
 ---
 
