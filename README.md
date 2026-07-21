@@ -4,9 +4,8 @@
 
 🔗 **Live Demo**: [https://risk-analyzer.pages.dev/](https://risk-analyzer.pages.dev/)
 
-|기업 비교 테이블|산업별 위험 신호|5개년 추이|
-| --- | --- | --- |
-|![기업 비교 테이블](docs/screenshots/compare-table.png)|![산업별 위험 신호](docs/screenshots/industry-risk-signal.png)|![5개년 추이](docs/screenshots/five-year-trend.png)|
+
+|![기업 비교 테이블](docs/screenshots/compare-table.png)
 
 ---
 
